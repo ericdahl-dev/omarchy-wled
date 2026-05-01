@@ -13,12 +13,12 @@ sha256sums=('SKIP')
 
 build() {
     cd "$pkgname-$pkgver"
-    python -m hatchling build --target wheel
+    /usr/bin/python -m hatchling build --target wheel
 }
 
 package() {
     cd "$pkgname-$pkgver"
-    python -m installer --destdir="$pkgdir" dist/*.whl
+    /usr/bin/python -m installer --destdir="$pkgdir" dist/*.whl
 
     # systemd user service
     install -Dm644 omarchy-wled@.service \
