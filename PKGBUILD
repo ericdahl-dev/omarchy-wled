@@ -1,4 +1,4 @@
-# Maintainer: Your Name <you@example.com>
+# Maintainer: ericdahl-dev
 pkgname=omarchy-wled
 pkgver=0.1.0
 pkgrel=1
@@ -9,7 +9,7 @@ license=('MIT')
 depends=('python' 'python-watchdog' 'python-pillow')
 makedepends=('python-hatchling' 'python-installer')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('c419dec9d7cded783e5ac169748e862bc48e9767d42321e431c88d725f27d4d7')
 
 build() {
     cd "$pkgname-$pkgver"
