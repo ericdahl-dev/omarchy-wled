@@ -27,11 +27,14 @@ class ColorSource(Protocol):
     def watch_path(self) -> Path: ...
 
 
-class AccentColorSource:
-    """Color from the Omarchy theme accent value."""
+class ThemeColorSource:
+    """Color from the Omarchy theme (accent, foreground, etc.)."""
+
+    def __init__(self, key: str = "accent"):
+        self._key = key
 
     def read(self) -> tuple[int, int, int]:
-        return read_accent_color()
+        return _read_color_key(self._key, COLORS_TOML)
 
     def sentinel(self) -> object:
         return THEME_NAME_FILE.stat().st_mtime
@@ -59,28 +62,10 @@ class BgColorSource:
         return Path(event_path).name == BACKGROUND_LINK.name
 
 
-class FgColorSource:
-    """Color from the Omarchy theme foreground value."""
-
-    def read(self) -> tuple[int, int, int]:
-        return read_foreground_color()
-
-    def sentinel(self) -> object:
-        return THEME_NAME_FILE.stat().st_mtime
-
-    def watch_path(self) -> Path:
-        return THEME_NAME_FILE
-
-    def is_trigger(self, event_path: str) -> bool:
-        return Path(event_path).resolve() == THEME_NAME_FILE.resolve()
-
-
-def make_source(name: str) -> AccentColorSource | BgColorSource | FgColorSource:
+def make_source(name: str) -> ThemeColorSource | BgColorSource:
     if name == "bg":
         return BgColorSource()
-    if name == "fg":
-        return FgColorSource()
-    return AccentColorSource()
+    return ThemeColorSource("fg" if name == "fg" else "accent")
 
 
 # ---------------------------------------------------------------------------
@@ -198,8 +183,7 @@ def watch(
     source: ColorSource = None,
 ) -> None:
     """Watch for theme/background changes and update WLED."""
-    if source is None:
-        source = AccentColorSource()
+    source = source or ThemeColorSource()
     try:
         from watchdog.observers import Observer
         from watchdog.events import FileSystemEventHandler
@@ -212,12 +196,13 @@ def watch(
 
     class Handler(FileSystemEventHandler):
         def _maybe_push(self, path: str) -> None:
-            if source.is_trigger(path):
-                time.sleep(0.2)
-                try:
-                    push_if_changed(source, state, ip, brightness, saturation)
-                except Exception as exc:
-                    print(f"Error: {exc}", file=sys.stderr)
+            if not source.is_trigger(path):
+                return
+            time.sleep(0.2)
+            try:
+                push_if_changed(source, state, ip, brightness, saturation)
+            except Exception as exc:
+                print(f"Error: {exc}", file=sys.stderr)
 
         def on_modified(self, event):
             self._maybe_push(event.src_path)
@@ -252,7 +237,7 @@ def _poll(
     source: ColorSource = None,
 ) -> None:
     if source is None:
-        source = AccentColorSource()
+        source = ThemeColorSource()
     last_sentinel = None
     state = {}
     while True:
