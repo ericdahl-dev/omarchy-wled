@@ -23,7 +23,6 @@ BACKGROUND_LINK = Path.home() / ".config/omarchy/current/background"
 
 class ColorSource(Protocol):
     def read(self) -> tuple[int, int, int]: ...
-    def sentinel(self) -> object: ...
     def watch_path(self) -> Path: ...
     def is_trigger(self, event_path: str) -> bool: ...
 
@@ -60,7 +59,7 @@ class BgColorSource:
         return BACKGROUND_LINK
 
     def is_trigger(self, event_path: str) -> bool:
-        return Path(event_path).name == BACKGROUND_LINK.name
+        return Path(event_path).resolve() == BACKGROUND_LINK.resolve()
 
 
 def make_source(name: str) -> ThemeColorSource | BgColorSource:
@@ -72,16 +71,6 @@ def make_source(name: str) -> ThemeColorSource | BgColorSource:
 # ---------------------------------------------------------------------------
 # Color reading
 # ---------------------------------------------------------------------------
-
-def read_accent_color(path: Path = COLORS_TOML) -> tuple[int, int, int]:
-    """Parse accent hex color from colors.toml, return (r, g, b)."""
-    return _read_color_key("accent", path)
-
-
-def read_foreground_color(path: Path = COLORS_TOML) -> tuple[int, int, int]:
-    """Parse foreground hex color from colors.toml, return (r, g, b)."""
-    return _read_color_key("foreground", path)
-
 
 def _read_color_key(key: str, path: Path) -> tuple[int, int, int]:
     text = path.read_text()
