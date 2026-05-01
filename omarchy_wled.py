@@ -10,11 +10,64 @@ import urllib.request
 import urllib.error
 import json
 from pathlib import Path
+from typing import Protocol
 
 COLORS_TOML = Path.home() / ".config/omarchy/current/theme/colors.toml"
 THEME_NAME_FILE = Path.home() / ".config/omarchy/current/theme.name"
 BACKGROUND_LINK = Path.home() / ".config/omarchy/current/background"
 
+
+# ---------------------------------------------------------------------------
+# ColorSource protocol
+# ---------------------------------------------------------------------------
+
+class ColorSource(Protocol):
+    def read(self) -> tuple[int, int, int]: ...
+    def sentinel(self) -> object: ...
+    def watch_path(self) -> Path: ...
+
+
+class AccentColorSource:
+    """Color from the Omarchy theme accent value."""
+
+    def read(self) -> tuple[int, int, int]:
+        return read_accent_color()
+
+    def sentinel(self) -> object:
+        return THEME_NAME_FILE.stat().st_mtime
+
+    def watch_path(self) -> Path:
+        return THEME_NAME_FILE
+
+    def is_trigger(self, event_path: str) -> bool:
+        return Path(event_path).resolve() == THEME_NAME_FILE.resolve()
+
+
+class BgColorSource:
+    """Color averaged from the current Omarchy wallpaper."""
+
+    def read(self) -> tuple[int, int, int]:
+        return read_bg_color()
+
+    def sentinel(self) -> object:
+        return str(BACKGROUND_LINK.readlink())
+
+    def watch_path(self) -> Path:
+        return BACKGROUND_LINK
+
+    def is_trigger(self, event_path: str) -> bool:
+        return Path(event_path).name == BACKGROUND_LINK.name
+
+
+def make_source(name: str) -> AccentColorSource | BgColorSource:
+    if name == "bg":
+        return BgColorSource()
+    return AccentColorSource()
+
+
+# ---------------------------------------------------------------------------
+# Color reading
+# ---------------------------------------------------------------------------
 
 def read_accent_color(path: Path = COLORS_TOML) -> tuple[int, int, int]:
     """Parse accent hex color from colors.toml, return (r, g, b)."""
@@ -41,23 +94,33 @@ def read_bg_color(link: Path = BACKGROUND_LINK) -> tuple[int, int, int]:
     return avg
 
 
-def read_color(source: str) -> tuple[int, int, int]:
-    """Return color from 'accent' or 'bg' source."""
-    if source == "bg":
-        return read_bg_color()
-    return read_accent_color()
-
+# ---------------------------------------------------------------------------
+# Color transformation
+# ---------------------------------------------------------------------------
 
 def apply_saturation(r: int, g: int, b: int, saturation: float) -> tuple[int, int, int]:
-    """Scale HSV saturation of an RGB color. saturation 0.0-1.0."""
+    """Scale HSV saturation. 1.0=unchanged, 0.0=greyscale, >1.0=boost."""
     h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-    s = max(0.0, min(1.0, saturation))
+    s = max(0.0, min(1.0, s * saturation))
     r2, g2, b2 = colorsys.hsv_to_rgb(h, s, v)
-    return int(r2 * 255), int(g2 * 255), int(b2 * 255)
+    return round(r2 * 255), round(g2 * 255), round(b2 * 255)
 
 
-def send_color_to_wled(ip: str, r: int, g: int, b: int, brightness: int = 255) -> None:
+# ---------------------------------------------------------------------------
+# WLED transport
+# ---------------------------------------------------------------------------
+
+def send_color_to_wled(
+    ip: str,
+    r: int,
+    g: int,
+    b: int,
+    brightness: int = 255,
+    opener=None,
+) -> None:
     """Send solid color to WLED via JSON API. brightness 0-255."""
+    if opener is None:
+        opener = urllib.request.urlopen
     url = f"http://{ip}/json/state"
     payload = json.dumps({
         "on": True,
@@ -70,13 +133,49 @@ def send_color_to_wled(ip: str, r: int, g: int, b: int, brightness: int = 255) -
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=5) as resp:
+    with opener(req, timeout=5) as resp:
         if resp.status not in (200, 207):
             raise RuntimeError(f"WLED returned HTTP {resp.status}")
 
 
-def watch(ip: str, brightness: int = 255, saturation: float = 1.0, source: str = "accent") -> None:
+# ---------------------------------------------------------------------------
+# Push logic
+# ---------------------------------------------------------------------------
+
+def push_if_changed(
+    source: ColorSource,
+    state: dict,
+    wled_ip: str,
+    brightness: int,
+    saturation: float,
+    opener=None,
+) -> None:
+    """Read color from source, apply transforms, send to WLED if changed.
+
+    state is a mutable dict with key 'last_color' persisted across calls.
+    """
+    color = source.read()
+    color = apply_saturation(*color, saturation)
+    if color == state.get("last_color"):
+        return
+    state["last_color"] = color
+    send_color_to_wled(wled_ip, *color, brightness, opener=opener)
+    print(f"Updated WLED → rgb{color} bri={brightness} sat={saturation:.2f}")
+
+
+# ---------------------------------------------------------------------------
+# Watching
+# ---------------------------------------------------------------------------
+
+def watch(
+    ip: str,
+    brightness: int = 255,
+    saturation: float = 1.0,
+    source: ColorSource = None,
+) -> None:
     """Watch for theme/background changes and update WLED."""
+    if source is None:
+        source = AccentColorSource()
     try:
         from watchdog.observers import Observer
         from watchdog.events import FileSystemEventHandler
@@ -85,51 +184,35 @@ def watch(ip: str, brightness: int = 255, saturation: float = 1.0, source: str =
         _poll(ip, brightness, saturation, source)
         return
 
-    class Handler(FileSystemEventHandler):
-        def __init__(self):
-            self._last_color = None
+    state = {}
 
-        def _is_bg_event(self, path: str) -> bool:
-            return source == "bg" and Path(path).name == BACKGROUND_LINK.name
+    class Handler(FileSystemEventHandler):
+        def _maybe_push(self, path: str) -> None:
+            if source.is_trigger(path):
+                time.sleep(0.2)
+                try:
+                    push_if_changed(source, state, ip, brightness, saturation)
+                except Exception as exc:
+                    print(f"Error: {exc}", file=sys.stderr)
 
         def on_modified(self, event):
-            if Path(event.src_path).resolve() == THEME_NAME_FILE.resolve():
-                time.sleep(0.2)
-                self._push()
-            elif self._is_bg_event(event.src_path):
-                time.sleep(0.2)
-                self._push()
+            self._maybe_push(event.src_path)
 
         def on_created(self, event):
-            if self._is_bg_event(event.src_path):
-                time.sleep(0.2)
-                self._push()
+            self._maybe_push(event.src_path)
 
         def on_moved(self, event):
-            if self._is_bg_event(event.dest_path):
-                time.sleep(0.2)
-                self._push()
+            self._maybe_push(event.dest_path)
 
-        def _push(self):
-            try:
-                color = read_color(source)
-                color = apply_saturation(*color, saturation)
-                if color == self._last_color:
-                    return
-                self._last_color = color
-                send_color_to_wled(ip, *color, brightness)
-                print(f"Updated WLED → rgb{color} bri={brightness} sat={saturation:.2f}")
-            except Exception as exc:
-                print(f"Error: {exc}", file=sys.stderr)
-
-    handler = Handler()
-    handler._push()
+    try:
+        push_if_changed(source, state, ip, brightness, saturation)
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
 
     observer = Observer()
-    observer.schedule(handler, str(THEME_NAME_FILE.parent), recursive=False)
-    watch_label = "background + theme" if source == "bg" else "theme"
+    observer.schedule(Handler(), str(THEME_NAME_FILE.parent), recursive=False)
     observer.start()
-    print(f"Watching {THEME_NAME_FILE.parent} for {watch_label} changes — Ctrl-C to stop")
+    print(f"Watching {THEME_NAME_FILE.parent} for changes — Ctrl-C to stop")
     try:
         while True:
             time.sleep(1)
@@ -138,28 +221,31 @@ def watch(ip: str, brightness: int = 255, saturation: float = 1.0, source: str =
     observer.join()
 
 
-def _poll(ip: str, brightness: int = 255, saturation: float = 1.0, source: str = "accent") -> None:
+def _poll(
+    ip: str,
+    brightness: int = 255,
+    saturation: float = 1.0,
+    source: ColorSource = None,
+) -> None:
+    if source is None:
+        source = AccentColorSource()
     last_sentinel = None
-    last_color = None
+    state = {}
     while True:
         try:
-            if source == "bg":
-                sentinel = str(BACKGROUND_LINK.readlink())
-            else:
-                sentinel = THEME_NAME_FILE.stat().st_mtime
-            if sentinel != last_sentinel:
-                last_sentinel = sentinel
+            current = source.sentinel()
+            if current != last_sentinel:
+                last_sentinel = current
                 time.sleep(0.2)
-                color = read_color(source)
-                if color != last_color:
-                    color = apply_saturation(*color, saturation)
-                    send_color_to_wled(ip, *color, brightness)
-                    print(f"Updated WLED → rgb{color} bri={brightness} sat={saturation:.2f}")
-                    last_color = color
+                push_if_changed(source, state, ip, brightness, saturation)
         except Exception as exc:
             print(f"Error: {exc}", file=sys.stderr)
         time.sleep(1)
 
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sync Omarchy accent color to WLED")
@@ -169,8 +255,8 @@ def main() -> None:
         help="Color source: accent (theme accent color) or bg (wallpaper average, requires Pillow)"
     )
     parser.add_argument(
-        "-s", "--saturation", type=float, default=1.0, metavar="0.0-1.0",
-        help="Color saturation (0.0=greyscale, 1.0=full, default 1.0)"
+        "-s", "--saturation", type=float, default=1.0, metavar="SCALE",
+        help="Saturation multiplier (0.0=greyscale, 1.0=unchanged, >1.0=boost, default 1.0)"
     )
     parser.add_argument(
         "-b", "--brightness", type=int, default=255, metavar="0-255",
@@ -182,13 +268,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    source = make_source(args.source)
+
     if args.once:
-        color = read_color(args.source)
-        color = apply_saturation(*color, args.saturation)
-        send_color_to_wled(args.wled_ip, *color, args.brightness)
-        print(f"Sent rgb{color} bri={args.brightness} sat={args.saturation:.2f} src={args.source} to {args.wled_ip}")
+        state = {}
+        push_if_changed(source, state, args.wled_ip, args.brightness, args.saturation)
     else:
-        watch(args.wled_ip, args.brightness, args.saturation, args.source)
+        watch(args.wled_ip, args.brightness, args.saturation, source)
 
 
 if __name__ == "__main__":

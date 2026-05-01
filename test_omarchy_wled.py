@@ -1,0 +1,211 @@
+import json
+import textwrap
+from pathlib import Path
+from unittest.mock import MagicMock
+import pytest
+
+from omarchy_wled import (
+    read_accent_color,
+    read_bg_color,
+    apply_saturation,
+    send_color_to_wled,
+    push_if_changed,
+    AccentColorSource,
+    BgColorSource,
+)
+
+# ---------------------------------------------------------------------------
+# Fixtures / helpers
+# ---------------------------------------------------------------------------
+
+COLORS_TOML_VALID = textwrap.dedent("""\
+    accent = "#82FB9C"
+    foreground = "#ddf7ff"
+    background = "#0B0C16"
+""")
+
+COLORS_TOML_MISSING = textwrap.dedent("""\
+    foreground = "#ddf7ff"
+    background = "#0B0C16"
+""")
+
+
+def make_colors_toml(tmp_path: Path, content: str) -> Path:
+    p = tmp_path / "colors.toml"
+    p.write_text(content)
+    return p
+
+
+def fake_opener(status: int = 200):
+    """Return a callable that behaves like urllib.request.urlopen."""
+    resp = MagicMock()
+    resp.status = status
+    resp.__enter__ = lambda s: s
+    resp.__exit__ = MagicMock(return_value=False)
+    captured = {}
+
+    def opener(req, timeout=None):
+        captured["req"] = req
+        return resp
+
+    opener.captured = captured
+    return opener
+
+
+# ---------------------------------------------------------------------------
+# read_accent_color
+# ---------------------------------------------------------------------------
+
+def test_read_accent_color_parses_hex(tmp_path):
+    p = make_colors_toml(tmp_path, COLORS_TOML_VALID)
+    assert read_accent_color(p) == (130, 251, 156)
+
+
+def test_read_accent_color_raises_on_missing_key(tmp_path):
+    p = make_colors_toml(tmp_path, COLORS_TOML_MISSING)
+    with pytest.raises(ValueError, match="accent color not found"):
+        read_accent_color(p)
+
+
+# ---------------------------------------------------------------------------
+# read_bg_color
+# ---------------------------------------------------------------------------
+
+def test_read_bg_color_returns_average_rgb(tmp_path):
+    from PIL import Image
+    img = Image.new("RGB", (2, 2))
+    img.putpixel((0, 0), (255, 0, 0))
+    img.putpixel((1, 0), (255, 0, 0))
+    img.putpixel((0, 1), (0, 0, 255))
+    img.putpixel((1, 1), (0, 0, 255))
+    img_path = tmp_path / "bg.png"
+    img.save(img_path)
+
+    symlink = tmp_path / "background"
+    symlink.symlink_to(img_path)
+
+    r, g, b = read_bg_color(symlink)
+    assert g == 0
+    assert 120 <= r <= 135
+    assert 120 <= b <= 135
+
+
+# ---------------------------------------------------------------------------
+# apply_saturation
+# ---------------------------------------------------------------------------
+
+def test_apply_saturation_full_preserves_color():
+    assert apply_saturation(130, 251, 156, 1.0) == (130, 251, 156)
+
+
+def test_apply_saturation_zero_produces_greyscale():
+    r, g, b = apply_saturation(130, 251, 156, 0.0)
+    assert r == g == b
+
+
+def test_apply_saturation_clamps_above_one():
+    r, g, b = apply_saturation(100, 200, 150, 999.0)
+    assert 0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255
+
+
+def test_apply_saturation_boost_increases_vividness():
+    import colorsys
+    r1, g1, b1 = apply_saturation(150, 180, 160, 1.0)
+    r2, g2, b2 = apply_saturation(150, 180, 160, 2.0)
+    _, s1, _ = colorsys.rgb_to_hsv(r1/255, g1/255, b1/255)
+    _, s2, _ = colorsys.rgb_to_hsv(r2/255, g2/255, b2/255)
+    assert s2 >= s1
+
+
+# ---------------------------------------------------------------------------
+# send_color_to_wled (injectable opener)
+# ---------------------------------------------------------------------------
+
+def test_send_color_posts_correct_payload():
+    op = fake_opener(200)
+    send_color_to_wled("192.168.1.50", 130, 251, 156, brightness=200, opener=op)
+
+    req = op.captured["req"]
+    assert req.full_url == "http://192.168.1.50/json/state"
+    assert req.method == "POST"
+    body = json.loads(req.data)
+    assert body["on"] is True
+    assert body["bri"] == 200
+    assert body["seg"][0]["col"][0] == [130, 251, 156]
+
+
+def test_send_color_raises_on_error_status():
+    op = fake_opener(500)
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        send_color_to_wled("192.168.1.50", 130, 251, 156, opener=op)
+
+
+# ---------------------------------------------------------------------------
+# push_if_changed
+# ---------------------------------------------------------------------------
+
+class FixedColorSource:
+    def __init__(self, color, sentinel_val="v1"):
+        self._color = color
+        self._sentinel_val = sentinel_val
+
+    def read(self):
+        return self._color
+
+    def sentinel(self):
+        return self._sentinel_val
+
+    def is_trigger(self, path):
+        return True
+
+
+def test_push_if_changed_sends_on_first_call():
+    op = fake_opener(200)
+    state = {}
+    push_if_changed(FixedColorSource((100, 150, 200)), state, "10.0.0.1", 255, 1.0, opener=op)
+    req = op.captured["req"]
+    body = json.loads(req.data)
+    assert body["seg"][0]["col"][0] == [100, 150, 200]
+
+
+def test_push_if_changed_does_not_resend_same_color():
+    sends = []
+
+    def counting_opener(req, timeout=None):
+        sends.append(req)
+        resp = MagicMock()
+        resp.status = 200
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        return resp
+
+    state = {}
+    src = FixedColorSource((100, 150, 200))
+    push_if_changed(src, state, "10.0.0.1", 255, 1.0, opener=counting_opener)
+    push_if_changed(src, state, "10.0.0.1", 255, 1.0, opener=counting_opener)
+    assert len(sends) == 1
+
+
+def test_push_if_changed_applies_saturation():
+    op = fake_opener(200)
+    state = {}
+    push_if_changed(FixedColorSource((100, 200, 150)), state, "10.0.0.1", 255, 0.0, opener=op)
+    body = json.loads(op.captured["req"].data)
+    r, g, b = body["seg"][0]["col"][0]
+    assert r == g == b
+
+
+# ---------------------------------------------------------------------------
+# ColorSource.is_trigger
+# ---------------------------------------------------------------------------
+
+def test_accent_source_triggers_on_theme_name_file(tmp_path):
+    src = AccentColorSource()
+    from omarchy_wled import THEME_NAME_FILE
+    assert src.is_trigger(str(THEME_NAME_FILE))
+
+
+def test_bg_source_triggers_on_background_link(tmp_path):
+    src = BgColorSource()
+    assert src.is_trigger("/some/path/background")
+    assert not src.is_trigger("/some/path/theme.name")
