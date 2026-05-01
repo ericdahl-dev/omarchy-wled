@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "omarchy_wled",
+  "project_id": "9fa4f0b3-1155-4e0d-954a-fe9103b7a55f"
+}
