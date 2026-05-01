@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "omarchy-wled"
-version = "0.1.0"
+version = "0.1.1"
 description = "Sync Omarchy theme accent or wallpaper color to a WLED device"
 readme = "README.md"
 license = { text = "MIT" }
