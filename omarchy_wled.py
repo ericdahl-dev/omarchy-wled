@@ -266,8 +266,8 @@ def main() -> None:
         help="Color source: accent (theme accent color) or bg (wallpaper average, requires Pillow)"
     )
     parser.add_argument(
-        "-s", "--saturation", type=float, default=1.0, metavar="SCALE",
-        help="Saturation multiplier (0.0=greyscale, 1.0=unchanged, >1.0=boost, default 1.0)"
+        "-s", "--saturation", type=float, default=None, metavar="SCALE",
+        help="Saturation multiplier (0.0=greyscale, 1.0=unchanged, >1.0=boost, default 1.2 for accent, 1.0 otherwise)"
     )
     parser.add_argument(
         "-b", "--brightness", type=int, default=255, metavar="0-255",
@@ -278,6 +278,9 @@ def main() -> None:
         help="Send current color once and exit (no watching)"
     )
     args = parser.parse_args()
+
+    if args.saturation is None:
+        args.saturation = 1.2 if args.source == "accent" else 1.0
 
     source = make_source(args.source)
 

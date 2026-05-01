@@ -26,7 +26,7 @@ omarchy-wled <WLED_IP> [options]
 Options:
   --source {accent,fg,bg}  Color source: accent (default), fg (foreground), or bg (wallpaper average)
   -b, --brightness 0-255   LED brightness (default 255)
-  -s, --saturation SCALE   Saturation multiplier (0.0=greyscale, 1.0=unchanged, >1.0=boost, default 1.0)
+  -s, --saturation SCALE   Saturation multiplier (0.0=greyscale, 1.0=unchanged, >1.0=boost; default 1.2 for accent, 1.0 for fg/bg)
   --once                   Send once and exit
 ```
 
@@ -42,7 +42,7 @@ omarchy-wled 192.168.1.50 --source fg
 # Use wallpaper average color at 80% brightness
 omarchy-wled 192.168.1.50 --source bg -b 200
 
-# Boost saturation
+# Boost saturation (accent already defaults to 1.2)
 omarchy-wled 192.168.1.50 -s 1.5
 
 # Send once and exit
