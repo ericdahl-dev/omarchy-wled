@@ -65,7 +65,7 @@ class BgColorSource:
 def make_source(name: str) -> ThemeColorSource | BgColorSource:
     if name == "bg":
         return BgColorSource()
-    return ThemeColorSource("fg" if name == "fg" else "accent")
+    return ThemeColorSource("foreground" if name == "fg" else "accent")
 
 
 # ---------------------------------------------------------------------------
