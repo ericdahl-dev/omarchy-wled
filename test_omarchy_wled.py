@@ -273,3 +273,56 @@ def test_theme_color_source_read_foreground(tmp_path, monkeypatch):
     p = make_colors_toml(tmp_path, COLORS_TOML_VALID)
     monkeypatch.setattr(omarchy_wled, "COLORS_TOML", p)
     assert ThemeColorSource("foreground").read() == (221, 247, 255)
+
+
+# ---------------------------------------------------------------------------
+# _poll — state sharing
+# ---------------------------------------------------------------------------
+
+def test_poll_uses_provided_state_dict():
+    """_poll must use a passed-in state dict, not create a new one."""
+    from omarchy_wled import _poll
+
+    sends = []
+
+    def counting_opener(req, timeout=None):
+        resp = MagicMock(spec=["status", "__enter__", "__exit__"])
+        resp.status = 200
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        sends.append(req)
+        return resp
+
+    # Pre-populate state as if a color was already pushed before the fallback.
+    shared_state = {"last_color": (100, 150, 200)}
+    src = FixedColorSource((100, 150, 200), sentinel_val="s1")
+
+    # Patch send_color_to_wled to use our opener so we can count calls.
+    original_send = omarchy_wled.send_color_to_wled
+
+    def patched_send(ip, r, g, b, brightness, opener=None):
+        return original_send(ip, r, g, b, brightness, opener=counting_opener)
+
+    omarchy_wled.send_color_to_wled = patched_send
+
+    original_sleep = omarchy_wled.time.sleep
+    call_count = 0
+
+    def fake_sleep(secs):
+        nonlocal call_count
+        call_count += 1
+        if call_count > 2:
+            raise KeyboardInterrupt
+
+    omarchy_wled.time.sleep = fake_sleep
+
+    try:
+        _poll("10.0.0.1", 255, 1.0, src, shared_state)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        omarchy_wled.time.sleep = original_sleep
+        omarchy_wled.send_color_to_wled = original_send
+
+    # Because shared_state was pre-populated with the color, _poll should skip the send.
+    assert len(sends) == 0

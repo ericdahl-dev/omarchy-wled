@@ -186,15 +186,16 @@ def watch(
     """Watch for theme/background changes and update WLED."""
     if source is None:
         source = ThemeColorSource()
+
+    state = {}
+
     try:
         from watchdog.observers import Observer
         from watchdog.events import FileSystemEventHandler
     except ImportError:
         print("watchdog not installed — falling back to polling (1s interval)", file=sys.stderr)
-        _poll(ip, brightness, saturation, source)
+        _poll(ip, brightness, saturation, source, state)
         return
-
-    state = {}
 
     class Handler(FileSystemEventHandler):
         def _maybe_push(self, path: str) -> None:
@@ -237,11 +238,13 @@ def _poll(
     brightness: int = 255,
     saturation: float = 1.0,
     source: ColorSource = None,
+    state: dict = None,
 ) -> None:
     if source is None:
         source = ThemeColorSource()
+    if state is None:
+        state = {}
     last_sentinel = None
-    state = {}
     while True:
         try:
             current = source.sentinel()
