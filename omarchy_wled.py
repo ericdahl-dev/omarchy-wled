@@ -221,9 +221,9 @@ def watch(
         print(f"Error: {exc}", file=sys.stderr)
 
     observer = Observer()
-    observer.schedule(Handler(), str(THEME_NAME_FILE.parent), recursive=False)
+    observer.schedule(Handler(), str(source.watch_path().parent), recursive=False)
     observer.start()
-    print(f"Watching {THEME_NAME_FILE.parent} for changes — Ctrl-C to stop")
+    print(f"Watching {source.watch_path().parent} for changes — Ctrl-C to stop")
     try:
         while True:
             time.sleep(1)
