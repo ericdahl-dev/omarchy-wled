@@ -183,7 +183,8 @@ def watch(
     source: ColorSource = None,
 ) -> None:
     """Watch for theme/background changes and update WLED."""
-    source = source or ThemeColorSource()
+    if source is None:
+        source = ThemeColorSource()
     try:
         from watchdog.observers import Observer
         from watchdog.events import FileSystemEventHandler
