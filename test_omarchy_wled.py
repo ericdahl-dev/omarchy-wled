@@ -6,15 +6,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from omarchy_wled import (
-    read_accent_color,
-    read_bg_color,
-    read_foreground_color,
     apply_saturation,
     send_color_to_wled,
     push_if_changed,
     ThemeColorSource,
     BgColorSource,
     make_source,
+    _read_color_key,
+    read_bg_color,
 )
 
 # ---------------------------------------------------------------------------
@@ -56,18 +55,18 @@ def fake_opener(status: int = 200):
 
 
 # ---------------------------------------------------------------------------
-# read_accent_color
+# _read_color_key
 # ---------------------------------------------------------------------------
 
 def test_read_accent_color_parses_hex(tmp_path):
     p = make_colors_toml(tmp_path, COLORS_TOML_VALID)
-    assert read_accent_color(p) == (130, 251, 156)
+    assert _read_color_key("accent", p) == (130, 251, 156)
 
 
 def test_read_accent_color_raises_on_missing_key(tmp_path):
     p = make_colors_toml(tmp_path, COLORS_TOML_MISSING)
     with pytest.raises(ValueError, match="accent color not found"):
-        read_accent_color(p)
+        _read_color_key("accent", p)
 
 
 # ---------------------------------------------------------------------------
@@ -211,12 +210,13 @@ def test_accent_source_triggers_on_theme_name_file(tmp_path):
 
 def test_bg_source_triggers_on_background_link(tmp_path):
     src = BgColorSource()
-    assert src.is_trigger("/some/path/background")
+    from omarchy_wled import BACKGROUND_LINK
+    assert src.is_trigger(str(BACKGROUND_LINK))
     assert not src.is_trigger("/some/path/theme.name")
 
 
 # ---------------------------------------------------------------------------
-# read_foreground_color / FgColorSource
+# _read_color_key / FgColorSource
 # ---------------------------------------------------------------------------
 
 COLORS_TOML_WITH_FG = textwrap.dedent("""\
@@ -228,13 +228,13 @@ COLORS_TOML_WITH_FG = textwrap.dedent("""\
 
 def test_read_foreground_color_parses_hex(tmp_path):
     p = make_colors_toml(tmp_path, COLORS_TOML_WITH_FG)
-    assert read_foreground_color(p) == (221, 247, 255)
+    assert _read_color_key("foreground", p) == (221, 247, 255)
 
 
 def test_read_foreground_color_raises_on_missing_key(tmp_path):
     p = make_colors_toml(tmp_path, "accent = \"#82FB9C\"\n")
     with pytest.raises(ValueError, match="foreground color not found"):
-        read_foreground_color(p)
+        _read_color_key("foreground", p)
 
 
 def test_fg_source_triggers_on_theme_name_file():
