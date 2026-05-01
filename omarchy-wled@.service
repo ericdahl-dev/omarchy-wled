@@ -1,0 +1,12 @@
+[Unit]
+Description=Sync Omarchy theme color to WLED (%I)
+After=network.target graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/omarchy-wled %I
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

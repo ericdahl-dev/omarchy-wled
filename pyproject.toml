@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "omarchy-wled"
+version = "0.1.0"
+description = "Sync Omarchy theme accent or wallpaper color to a WLED device"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    "watchdog>=4.0",
+    "Pillow>=10.0",
+]
+
+[project.scripts]
+omarchy-wled = "omarchy_wled:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["omarchy_wled.py"]
