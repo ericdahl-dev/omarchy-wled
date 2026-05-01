@@ -59,9 +59,27 @@ class BgColorSource:
         return Path(event_path).name == BACKGROUND_LINK.name
 
 
-def make_source(name: str) -> AccentColorSource | BgColorSource:
+class FgColorSource:
+    """Color from the Omarchy theme foreground value."""
+
+    def read(self) -> tuple[int, int, int]:
+        return read_foreground_color()
+
+    def sentinel(self) -> object:
+        return THEME_NAME_FILE.stat().st_mtime
+
+    def watch_path(self) -> Path:
+        return THEME_NAME_FILE
+
+    def is_trigger(self, event_path: str) -> bool:
+        return Path(event_path).resolve() == THEME_NAME_FILE.resolve()
+
+
+def make_source(name: str) -> AccentColorSource | BgColorSource | FgColorSource:
     if name == "bg":
         return BgColorSource()
+    if name == "fg":
+        return FgColorSource()
     return AccentColorSource()
 
 
@@ -71,15 +89,21 @@ def make_source(name: str) -> AccentColorSource | BgColorSource:
 
 def read_accent_color(path: Path = COLORS_TOML) -> tuple[int, int, int]:
     """Parse accent hex color from colors.toml, return (r, g, b)."""
+    return _read_color_key("accent", path)
+
+
+def read_foreground_color(path: Path = COLORS_TOML) -> tuple[int, int, int]:
+    """Parse foreground hex color from colors.toml, return (r, g, b)."""
+    return _read_color_key("foreground", path)
+
+
+def _read_color_key(key: str, path: Path) -> tuple[int, int, int]:
     text = path.read_text()
-    match = re.search(r'^accent\s*=\s*"#([0-9a-fA-F]{6})"', text, re.MULTILINE)
+    match = re.search(rf'^{key}\s*=\s*"#([0-9a-fA-F]{{6}})"', text, re.MULTILINE)
     if not match:
-        raise ValueError(f"accent color not found in {path}")
+        raise ValueError(f"{key} color not found in {path}")
     hex_color = match.group(1)
-    r = int(hex_color[0:2], 16)
-    g = int(hex_color[2:4], 16)
-    b = int(hex_color[4:6], 16)
-    return r, g, b
+    return int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
 
 
 def read_bg_color(link: Path = BACKGROUND_LINK) -> tuple[int, int, int]:
@@ -251,7 +275,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Sync Omarchy accent color to WLED")
     parser.add_argument("wled_ip", help="IP address or hostname of WLED device")
     parser.add_argument(
-        "--source", choices=["accent", "bg"], default="accent",
+        "--source", choices=["accent", "fg", "bg"], default="accent",
         help="Color source: accent (theme accent color) or bg (wallpaper average, requires Pillow)"
     )
     parser.add_argument(

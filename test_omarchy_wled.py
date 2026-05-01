@@ -7,11 +7,14 @@ import pytest
 from omarchy_wled import (
     read_accent_color,
     read_bg_color,
+    read_foreground_color,
     apply_saturation,
     send_color_to_wled,
     push_if_changed,
     AccentColorSource,
     BgColorSource,
+    FgColorSource,
+    make_source,
 )
 
 # ---------------------------------------------------------------------------
@@ -209,3 +212,43 @@ def test_bg_source_triggers_on_background_link(tmp_path):
     src = BgColorSource()
     assert src.is_trigger("/some/path/background")
     assert not src.is_trigger("/some/path/theme.name")
+
+
+# ---------------------------------------------------------------------------
+# read_foreground_color / FgColorSource
+# ---------------------------------------------------------------------------
+
+COLORS_TOML_WITH_FG = textwrap.dedent("""\
+    accent = "#82FB9C"
+    foreground = "#ddf7ff"
+    background = "#0B0C16"
+""")
+
+
+def test_read_foreground_color_parses_hex(tmp_path):
+    p = make_colors_toml(tmp_path, COLORS_TOML_WITH_FG)
+    assert read_foreground_color(p) == (221, 247, 255)
+
+
+def test_read_foreground_color_raises_on_missing_key(tmp_path):
+    p = make_colors_toml(tmp_path, "accent = \"#82FB9C\"\n")
+    with pytest.raises(ValueError, match="foreground color not found"):
+        read_foreground_color(p)
+
+
+def test_fg_source_triggers_on_theme_name_file():
+    src = FgColorSource()
+    from omarchy_wled import THEME_NAME_FILE
+    assert src.is_trigger(str(THEME_NAME_FILE))
+
+
+def test_make_source_fg_returns_fg_source():
+    assert isinstance(make_source("fg"), FgColorSource)
+
+
+def test_make_source_accent_returns_accent_source():
+    assert isinstance(make_source("accent"), AccentColorSource)
+
+
+def test_make_source_bg_returns_bg_source():
+    assert isinstance(make_source("bg"), BgColorSource)
