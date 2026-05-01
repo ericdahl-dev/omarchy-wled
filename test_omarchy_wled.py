@@ -1,5 +1,6 @@
 import json
 import textwrap
+import omarchy_wled
 from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
@@ -237,7 +238,7 @@ def test_read_foreground_color_raises_on_missing_key(tmp_path):
 
 
 def test_fg_source_triggers_on_theme_name_file():
-    src = ThemeColorSource("fg")
+    src = ThemeColorSource("foreground")
     from omarchy_wled import THEME_NAME_FILE
     assert src.is_trigger(str(THEME_NAME_FILE))
 
@@ -245,7 +246,7 @@ def test_fg_source_triggers_on_theme_name_file():
 def test_make_source_fg_returns_theme_source():
     src = make_source("fg")
     assert isinstance(src, ThemeColorSource)
-    assert src._key == "fg"
+    assert src._key == "foreground"
 
 
 def test_make_source_accent_returns_theme_source():
@@ -256,3 +257,19 @@ def test_make_source_accent_returns_theme_source():
 
 def test_make_source_bg_returns_bg_source():
     assert isinstance(make_source("bg"), BgColorSource)
+
+
+# ---------------------------------------------------------------------------
+# ThemeColorSource.read end-to-end
+# ---------------------------------------------------------------------------
+
+def test_theme_color_source_read_accent(tmp_path, monkeypatch):
+    p = make_colors_toml(tmp_path, COLORS_TOML_VALID)
+    monkeypatch.setattr(omarchy_wled, "COLORS_TOML", p)
+    assert ThemeColorSource("accent").read() == (130, 251, 156)
+
+
+def test_theme_color_source_read_foreground(tmp_path, monkeypatch):
+    p = make_colors_toml(tmp_path, COLORS_TOML_VALID)
+    monkeypatch.setattr(omarchy_wled, "COLORS_TOML", p)
+    assert ThemeColorSource("foreground").read() == (221, 247, 255)
