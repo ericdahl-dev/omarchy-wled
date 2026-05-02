@@ -164,8 +164,12 @@ def push_if_changed(
     """Read color from source, apply transforms, send to WLED if changed.
 
     state is a mutable dict with key 'last_color' persisted across calls.
+    Silently skips if the source file does not exist (e.g. theme has no colors.toml).
     """
-    color = source.read()
+    try:
+        color = source.read()
+    except (FileNotFoundError, OSError):
+        return
     color = apply_saturation(*color, saturation)
     if color == state.get("last_color"):
         return

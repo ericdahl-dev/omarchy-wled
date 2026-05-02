@@ -430,6 +430,7 @@ class OmarchyWledTui(App):
             self.refresh_css()
         except Exception:
             pass
+        self._refresh_color_preview()
 
     def _refresh_color_preview_with_sender(self, cfg: TuiConfig, sender) -> None:
         from omarchy_wled import make_source, apply_saturation
