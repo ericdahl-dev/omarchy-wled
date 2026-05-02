@@ -442,6 +442,10 @@ class OmarchyWledTui(App):
         self.mount(self._build_main(), before="#status-bar")
         self._refresh_color_preview()
 
+    @on(Input.Changed, "#cfg-brightness")
+    def on_brightness_changed(self, _) -> None:
+        self._refresh_color_preview()
+
     @on(Input.Changed, "#cfg-saturation")
     def on_saturation_changed(self, _) -> None:
         self._refresh_color_preview()
