@@ -92,21 +92,17 @@ def read_bg_color(link: Path = BACKGROUND_LINK) -> tuple[int, int, int]:
         from PIL import Image
     except ImportError:
         raise RuntimeError("Pillow not installed — run: pip install Pillow")
+
+    # Lookup tables for sRGB↔linear conversion (256 entries, applied in C by PIL).
+    to_linear_lut = [round(((v / 255) ** 2.2) * 255) for v in range(256)]
+    to_srgb_lut   = [round(((v / 255) ** (1 / 2.2)) * 255) for v in range(256)]
+
     img_path = link.resolve()
     with Image.open(img_path) as img:
-        rgb = img.convert("RGB")
+        linear = img.convert("RGB").point(to_linear_lut * 3)
+        avg = linear.resize((1, 1), Image.LANCZOS).getpixel((0, 0))
 
-    # Decode sRGB → linear, average, re-encode → sRGB
-    pixels = list(rgb.getdata())
-    n = len(pixels)
-    lin_r = sum((r / 255) ** 2.2 for r, g, b in pixels) / n
-    lin_g = sum((g / 255) ** 2.2 for r, g, b in pixels) / n
-    lin_b = sum((b / 255) ** 2.2 for r, g, b in pixels) / n
-    return (
-        round(lin_r ** (1 / 2.2) * 255),
-        round(lin_g ** (1 / 2.2) * 255),
-        round(lin_b ** (1 / 2.2) * 255),
-    )
+    return (to_srgb_lut[avg[0]], to_srgb_lut[avg[1]], to_srgb_lut[avg[2]])
 
 
 # ---------------------------------------------------------------------------
