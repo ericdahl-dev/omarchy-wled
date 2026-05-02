@@ -83,15 +83,30 @@ def _read_color_key(key: str, path: Path) -> tuple[int, int, int]:
 
 
 def read_bg_color(link: Path = BACKGROUND_LINK) -> tuple[int, int, int]:
-    """Return average color of the current wallpaper image."""
+    """Return perceptual average color of the current wallpaper image.
+
+    Averages in linear light (gamma-decoded) then re-encodes to sRGB, so the
+    result matches what the eye sees rather than being biased toward bright pixels.
+    """
     try:
         from PIL import Image
     except ImportError:
         raise RuntimeError("Pillow not installed — run: pip install Pillow")
     img_path = link.resolve()
     with Image.open(img_path) as img:
-        avg = img.convert("RGB").resize((1, 1), Image.LANCZOS).getpixel((0, 0))
-    return avg
+        rgb = img.convert("RGB")
+
+    # Decode sRGB → linear, average, re-encode → sRGB
+    pixels = list(rgb.getdata())
+    n = len(pixels)
+    lin_r = sum((r / 255) ** 2.2 for r, g, b in pixels) / n
+    lin_g = sum((g / 255) ** 2.2 for r, g, b in pixels) / n
+    lin_b = sum((b / 255) ** 2.2 for r, g, b in pixels) / n
+    return (
+        round(lin_r ** (1 / 2.2) * 255),
+        round(lin_g ** (1 / 2.2) * 255),
+        round(lin_b ** (1 / 2.2) * 255),
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -88,8 +88,25 @@ def test_read_bg_color_returns_average_rgb(tmp_path):
 
     r, g, b = read_bg_color(symlink)
     assert g == 0
-    assert 120 <= r <= 135
-    assert 120 <= b <= 135
+    # linear averaging: sqrt((255^2 + 0^2) / 2) ≈ 180 after sRGB re-encode
+    assert 170 <= r <= 190
+    assert 170 <= b <= 190
+
+
+def test_read_bg_color_linear_avg_brighter_than_naive(tmp_path):
+    """Linear-space average must be brighter than naive sRGB average for mixed bright/dark."""
+    from PIL import Image
+    img = Image.new("RGB", (2, 1))
+    img.putpixel((0, 0), (255, 0, 0))
+    img.putpixel((1, 0), (0, 0, 0))
+    img_path = tmp_path / "bg.png"
+    img.save(img_path)
+    symlink = tmp_path / "background"
+    symlink.symlink_to(img_path)
+
+    r, g, b = read_bg_color(symlink)
+    # naive sRGB avg would give r=127; linear avg gives ~180
+    assert r > 150
 
 
 # ---------------------------------------------------------------------------
