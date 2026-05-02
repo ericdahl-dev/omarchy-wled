@@ -161,6 +161,7 @@ from textual.widgets import (
     Static,
     Switch,
 )
+from textual_slider import Slider
 from textual import on, work
 
 
@@ -372,13 +373,13 @@ class OmarchyWledTui(App):
                 classes="field-row",
             ),
             Horizontal(
-                Label("Brightness (0-100%):", classes="field-label"),
-                Input(value=str(cfg.brightness_pct), id="cfg-brightness", classes="field-input"),
+                Label("Brightness (0-100%):", id="brightness-label", classes="field-label"),
+                Slider(0, 100, value=cfg.brightness_pct, id="cfg-brightness", classes="field-input"),
                 classes="field-row",
             ),
             Horizontal(
-                Label("Saturation (×, e.g. 1.2):", classes="field-label"),
-                Input(value=str(cfg.saturation), id="cfg-saturation", classes="field-input"),
+                Label(f"Saturation (0-200%):", id="saturation-label", classes="field-label"),
+                Slider(0, 200, value=int(cfg.saturation * 100), id="cfg-saturation", classes="field-input"),
                 classes="field-row",
             ),
             Label("Service", classes="section-label"),
@@ -463,8 +464,8 @@ class OmarchyWledTui(App):
         try:
             ip = self.query_one("#cfg-ip", Input).value.strip()
             source = self.query_one("#cfg-source", Select).value or "accent"
-            pct = float(self.query_one("#cfg-brightness", Input).value or 100)
-            saturation = float(self.query_one("#cfg-saturation", Input).value or 1.2)
+            pct = self.query_one("#cfg-brightness", Slider).value
+            saturation = self.query_one("#cfg-saturation", Slider).value / 100
             return TuiConfig.from_brightness_pct(ip=ip, pct=int(pct), source=str(source), saturation=saturation)
         except (NoMatches, ValueError):
             return self._config or TuiConfig(ip="")
@@ -484,12 +485,20 @@ class OmarchyWledTui(App):
             self._debounce_timer.stop()
         self._debounce_timer = self.set_timer(0.3, self._refresh_color_preview)
 
-    @on(Input.Changed, "#cfg-brightness")
-    def on_brightness_changed(self, _) -> None:
+    @on(Slider.Changed, "#cfg-brightness")
+    def on_brightness_changed(self, event: Slider.Changed) -> None:
+        try:
+            self.query_one("#brightness-label", Label).update(f"Brightness: {event.value}%")
+        except NoMatches:
+            pass
         self._schedule_refresh()
 
-    @on(Input.Changed, "#cfg-saturation")
-    def on_saturation_changed(self, _) -> None:
+    @on(Slider.Changed, "#cfg-saturation")
+    def on_saturation_changed(self, event: Slider.Changed) -> None:
+        try:
+            self.query_one("#saturation-label", Label).update(f"Saturation: {event.value / 100:.2f}\u00d7")
+        except NoMatches:
+            pass
         self._schedule_refresh()
 
     @on(Select.Changed, "#cfg-source")
