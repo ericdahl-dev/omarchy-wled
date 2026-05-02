@@ -481,7 +481,7 @@ class OmarchyWledTui(App):
         """Debounce: cancel pending refresh and schedule a new one 300ms out."""
         if self._debounce_timer is not None:
             self._debounce_timer.stop()
-        self._debounce_timer = self.set_timer(0.3, self._refresh_color_preview)
+        self._debounce_timer = self.set_timer(0.08, self._refresh_color_preview)
 
     @on(Slider.Changed, "#cfg-brightness")
     def on_brightness_changed(self, event: Slider.Changed) -> None:
