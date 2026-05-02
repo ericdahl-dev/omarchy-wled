@@ -412,11 +412,13 @@ class OmarchyWledTui(App):
     def _refresh_color_preview(self) -> None:
         try:
             cfg = self._current_config_from_ui()
-            from omarchy_wled import make_source, apply_saturation
+            from omarchy_wled import make_source, apply_saturation, send_color_to_wled
             source = make_source(cfg.source)
             color = source.read()
             color = apply_saturation(*color, cfg.saturation)
             self.query_one(ColorPreview).color = color
+            if cfg.ip:
+                send_color_to_wled(cfg.ip, *color, cfg.brightness)
         except Exception:
             pass
 
