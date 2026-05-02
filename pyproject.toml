@@ -14,10 +14,12 @@ dependencies = []
 [project.optional-dependencies]
 watch = ["watchdog>=4.0"]
 bg = ["Pillow>=10.0"]
-all = ["watchdog>=4.0", "Pillow>=10.0"]
+all = ["watchdog>=4.0", "Pillow>=10.0", "textual>=0.1"]
+tui = ["textual>=0.1"]
 
 [project.scripts]
 omarchy-wled = "omarchy_wled:main"
+omarchy-wled-tui = "omarchy_wled_tui:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["omarchy_wled.py"]
+packages = ["omarchy_wled.py", "omarchy_wled_tui.py"]

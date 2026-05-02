@@ -8,7 +8,7 @@ Single-file Python tool that watches Omarchy theme/wallpaper changes and syncs c
 
 ```bash
 # Run tests
-python -m pytest test_omarchy_wled.py -q
+python -m pytest test_omarchy_wled.py test_omarchy_wled_tui.py -q
 
 # Install for dev (with all optional deps)
 pip install -e ".[all]"
@@ -26,7 +26,8 @@ pip install -e ".[all]"
 
 ## Architecture notes
 
-- All logic lives in `omarchy_wled.py` — keep it single-file
+- Core logic lives in `omarchy_wled.py` — keep it single-file
+- TUI lives in `omarchy_wled_tui.py` (Textual app) — intentional exception to the single-file rule
 - `ColorSource` protocol: `read()`, `watch_path()`, `is_trigger()` — the seam for new sources
 - `sentinel()` is **not** on the protocol; it's a poll-fallback concern passed directly to `_poll()`
 - `watchdog` and `Pillow` are optional deps — code catches `ImportError` at runtime
@@ -41,8 +42,10 @@ All architectural issues from the initial audit have been resolved. No known ope
 
 | File | Purpose |
 |---|---|
-| `omarchy_wled.py` | All logic |
-| `test_omarchy_wled.py` | pytest suite |
+| `omarchy_wled.py` | Core logic |
+| `omarchy_wled_tui.py` | Textual TUI (`omarchy-wled-tui` entry point) |
+| `test_omarchy_wled.py` | pytest suite (core) |
+| `test_omarchy_wled_tui.py` | pytest suite (TUI) |
 | `PKGBUILD` | AUR package |
 | `pyproject.toml` | Python package metadata |
 | `omarchy-wled@.service` | systemd user service template |
