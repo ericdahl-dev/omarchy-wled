@@ -476,6 +476,13 @@ class OmarchyWledTui(App):
             self._set_status(f"Service error: {exc}", error=True)
 
     @on(Button.Pressed, "#btn-save")
+    def on_save_pressed(self) -> None:
+        self.action_save()
+
+    @on(Button.Pressed, "#btn-quit")
+    def on_quit_pressed(self) -> None:
+        self.exit()
+
     def action_save(self) -> None:
         cfg = self._current_config_from_ui()
         try:
@@ -495,13 +502,6 @@ class OmarchyWledTui(App):
         else:
             self._set_status("Configuration saved.")
         self._refresh_color_preview()
-
-    @on(Button.Pressed, "#btn-quit")
-    def on_quit_pressed(self) -> None:
-        self.exit()
-
-    def action_save(self) -> None:
-        self.query_one("#btn-save", Button).press()
 
     def _set_status(self, msg: str, error: bool = False) -> None:
         bar = self.query_one("#status-bar", Label)
