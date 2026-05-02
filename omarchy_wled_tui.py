@@ -509,14 +509,21 @@ class OmarchyWledTui(App):
         if not cfg.ip:
             self._set_status("IP is required to control service.", error=True)
             return
+        try:
+            cfg.validate()
+        except ValueError as exc:
+            self._set_status(str(exc), error=True)
+            return
+        save_config(cfg)
+        self._config = cfg
         svc = ServiceController(cfg.ip)
         try:
             if event.value:
                 svc.enable()
-                self._set_status(f"Service enabled: omarchy-wled@{cfg.ip}")
+                self._set_status(f"Settings saved — service started: omarchy-wled@{cfg.ip}")
             else:
                 svc.disable()
-                self._set_status(f"Service disabled: omarchy-wled@{cfg.ip}")
+                self._set_status(f"Service stopped and disabled: omarchy-wled@{cfg.ip}")
         except Exception as exc:
             self._set_status(f"Service error: {exc}", error=True)
 

@@ -4,7 +4,7 @@ After=network.target graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
-ExecStart=%h/.local/bin/omarchy-wled %I
+ExecStart=%h/.local/bin/omarchy-wled
 Restart=on-failure
 RestartSec=5
 
