@@ -84,7 +84,7 @@ def load_config(path: Path = CONFIG_PATH) -> Optional[TuiConfig]:
 class ServiceController:
     _SERVICE_TEMPLATE = """[Unit]\nDescription=Sync Omarchy theme color to WLED\nAfter=network.target graphical-session.target\nPartOf=graphical-session.target\n\n[Service]\nExecStart=%h/.local/bin/omarchy-wled\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"""
     _SERVICE_DIR = Path.home() / ".config" / "systemd" / "user"
-    _SERVICE_FILE = _SERVICE_DIR / "omarchy-wled@.service"
+    _SERVICE_FILE = _SERVICE_DIR / "omarchy-wled.service"
 
     def __init__(self, ip: str, runner=None):
         self._ip = ip
@@ -92,11 +92,16 @@ class ServiceController:
 
     def _install_service_file(self) -> None:
         self._SERVICE_DIR.mkdir(parents=True, exist_ok=True)
+        # Disable old IP-named unit if it exists
+        old_unit = f"omarchy-wled@{self._ip}.service"
+        old_wants = self._SERVICE_DIR / "default.target.wants" / old_unit
+        if old_wants.exists():
+            old_wants.unlink()
         self._SERVICE_FILE.write_text(self._SERVICE_TEMPLATE)
         self._run(["systemctl", "--user", "daemon-reload"])
 
     def _unit(self) -> str:
-        return f"omarchy-wled@{self._ip}"
+        return "omarchy-wled"
 
     def enable(self) -> None:
         self._install_service_file()

@@ -99,7 +99,7 @@ def test_service_enable_runs_correct_command():
     svc = ServiceController("10.0.0.1", runner=runner)
     svc.enable()
     assert runner.calls[-1] == [
-        "systemctl", "--user", "enable", "--now", "omarchy-wled@10.0.0.1"
+        "systemctl", "--user", "enable", "--now", "omarchy-wled"
     ]
 
 
@@ -108,7 +108,7 @@ def test_service_disable_runs_correct_command():
     svc = ServiceController("10.0.0.1", runner=runner)
     svc.disable()
     assert runner.calls[-1] == [
-        "systemctl", "--user", "disable", "--now", "omarchy-wled@10.0.0.1"
+        "systemctl", "--user", "disable", "--now", "omarchy-wled"
     ]
 
 
@@ -117,7 +117,7 @@ def test_service_restart_runs_correct_command():
     svc = ServiceController("10.0.0.1", runner=runner)
     svc.restart()
     assert runner.calls[-1] == [
-        "systemctl", "--user", "restart", "omarchy-wled@10.0.0.1"
+        "systemctl", "--user", "restart", "omarchy-wled"
     ]
 
 
