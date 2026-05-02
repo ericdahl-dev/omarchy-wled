@@ -202,6 +202,16 @@ Screen {
     width: 1fr;
 }
 
+Slider {
+    width: 1fr;
+    height: 3;
+}
+
+Slider > .slider--slider {
+    color: $accent;
+    background: $panel-darken-2;
+}
+
 #color-preview {
     height: 3;
     margin: 1 0;
@@ -374,12 +384,12 @@ class OmarchyWledTui(App):
             ),
             Horizontal(
                 Label("Brightness (0-100%):", id="brightness-label", classes="field-label"),
-                Slider(0, 100, value=cfg.brightness_pct, id="cfg-brightness", classes="field-input"),
+                Slider(0, 100, step=2, value=cfg.brightness_pct, id="cfg-brightness", classes="field-input"),
                 classes="field-row",
             ),
             Horizontal(
                 Label(f"Saturation (0-200%):", id="saturation-label", classes="field-label"),
-                Slider(0, 200, value=int(cfg.saturation * 100), id="cfg-saturation", classes="field-input"),
+                Slider(0, 200, step=2, value=int(cfg.saturation * 100), id="cfg-saturation", classes="field-input"),
                 classes="field-row",
             ),
             Label("Service", classes="section-label"),
