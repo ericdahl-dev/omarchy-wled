@@ -167,22 +167,23 @@ from textual import on, work
 
 CSS = """
 Screen {
-    background: $background;
+    overflow-y: auto;
 }
 
 #title {
     text-align: center;
     padding: 1 2;
-    color: $accent;
+    color: $success;
     text-style: bold;
 }
 
 #setup-screen, #main-screen {
     padding: 1 2;
+    height: auto;
 }
 
 .section-label {
-    color: $accent;
+    color: $success;
     text-style: bold;
     margin-top: 1;
 }
@@ -193,9 +194,8 @@ Screen {
 }
 
 .field-label {
-    width: 20;
+    width: 22;
     content-align: left middle;
-    color: $foreground;
 }
 
 .field-input {
@@ -208,8 +208,7 @@ Slider {
 }
 
 Slider > .slider--slider {
-    color: $accent;
-    background: $panel-darken-2;
+    color: $success;
 }
 
 #color-preview {
@@ -219,30 +218,19 @@ Slider > .slider--slider {
     text-style: bold;
 }
 
-#service-row {
-    height: 3;
-    margin-top: 1;
-}
-
-#service-label {
-    width: 20;
-    content-align: left middle;
-    color: $foreground;
-}
-
 #status-bar {
     height: 1;
     margin-top: 1;
-    color: $accent;
+    color: $success;
     text-align: center;
 }
 
 .error {
-    color: red;
+    color: $error;
 }
 
 .success {
-    color: $accent;
+    color: $success;
 }
 
 #btn-row {
