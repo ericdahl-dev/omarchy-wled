@@ -25,6 +25,7 @@ class ColorSource(Protocol):
     def read(self) -> tuple[int, int, int]: ...
     def watch_path(self) -> Path: ...
     def is_trigger(self, event_path: str) -> bool: ...
+    def sentinel(self) -> object: ...
 
 
 class ThemeColorSource:
@@ -166,6 +167,43 @@ def push_if_changed(
 # Watching
 # ---------------------------------------------------------------------------
 
+try:
+    from watchdog.events import FileSystemEventHandler as _FSEHandler
+except ImportError:
+    _FSEHandler = object  # type: ignore
+
+
+class WatchHandler(_FSEHandler):
+    """Watchdog event handler that pushes color to WLED on source-triggered changes."""
+
+    def __init__(self, source: ColorSource, state: dict, ip: str, brightness: int, saturation: float):
+        if _FSEHandler is not object:
+            super().__init__()
+        self._source = source
+        self._state = state
+        self._ip = ip
+        self._brightness = brightness
+        self._saturation = saturation
+
+    def _maybe_push(self, path: str) -> None:
+        if not self._source.is_trigger(path):
+            return
+        time.sleep(0.2)
+        try:
+            push_if_changed(self._source, self._state, self._ip, self._brightness, self._saturation)
+        except Exception as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+
+    def on_modified(self, event):
+        self._maybe_push(event.src_path)
+
+    def on_created(self, event):
+        self._maybe_push(event.src_path)
+
+    def on_moved(self, event):
+        self._maybe_push(event.dest_path)
+
+
 def watch(
     ip: str,
     brightness: int = 255,
@@ -180,30 +218,12 @@ def watch(
 
     try:
         from watchdog.observers import Observer
-        from watchdog.events import FileSystemEventHandler
     except ImportError:
         print("watchdog not installed — falling back to polling (1s interval)", file=sys.stderr)
         _poll(ip, brightness, saturation, source, state)
         return
 
-    class Handler(FileSystemEventHandler):
-        def _maybe_push(self, path: str) -> None:
-            if not source.is_trigger(path):
-                return
-            time.sleep(0.2)
-            try:
-                push_if_changed(source, state, ip, brightness, saturation)
-            except Exception as exc:
-                print(f"Error: {exc}", file=sys.stderr)
-
-        def on_modified(self, event):
-            self._maybe_push(event.src_path)
-
-        def on_created(self, event):
-            self._maybe_push(event.src_path)
-
-        def on_moved(self, event):
-            self._maybe_push(event.dest_path)
+    handler = WatchHandler(source=source, state=state, ip=ip, brightness=brightness, saturation=saturation)
 
     try:
         push_if_changed(source, state, ip, brightness, saturation)
@@ -211,7 +231,7 @@ def watch(
         print(f"Error: {exc}", file=sys.stderr)
 
     observer = Observer()
-    observer.schedule(Handler(), str(source.watch_path().parent), recursive=False)
+    observer.schedule(handler, str(source.watch_path().parent), recursive=False)
     observer.start()
     print(f"Watching {source.watch_path().parent} for changes — Ctrl-C to stop")
     try:

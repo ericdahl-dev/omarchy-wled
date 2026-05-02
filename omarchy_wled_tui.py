@@ -7,10 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-CONFIG_PATH = Path.home() / ".config" / "omarchy-wled" / "config.toml"
-COLORS_TOML = Path.home() / ".config/omarchy/current/theme/colors.toml"
-THEME_NAME_FILE = Path.home() / ".config/omarchy/current/theme.name"
+from omarchy_wled import COLORS_TOML, THEME_NAME_FILE, _read_color_key
 
+CONFIG_PATH = Path.home() / ".config" / "omarchy-wled" / "config.toml"
 
 # ---------------------------------------------------------------------------
 # Config model
@@ -42,6 +41,17 @@ class TuiConfig:
             and self.brightness == other.brightness
             and abs(self.saturation - other.saturation) < 1e-9
         )
+
+    @property
+    def brightness_pct(self) -> int:
+        """Brightness as 0-100 percentage for display."""
+        return round(self.brightness / 255 * 100)
+
+    @classmethod
+    def from_brightness_pct(cls, ip: str, pct: int, **kwargs) -> "TuiConfig":
+        """Construct with brightness given as 0-100 percentage."""
+        brightness = round(max(0, min(100, pct)) / 100 * 255)
+        return cls(ip=ip, brightness=brightness, **kwargs)
 
 
 def save_config(cfg: TuiConfig, path: Path = CONFIG_PATH) -> None:
@@ -108,7 +118,6 @@ class TuiTheme:
 
     @classmethod
     def from_toml(cls, path: Path) -> "TuiTheme":
-        from omarchy_wled import _read_color_key
         return cls(
             accent=_read_color_key("accent", path),
             foreground=_read_color_key("foreground", path),
@@ -329,6 +338,7 @@ class OmarchyWledTui(App):
         super().__init__()
         self._config: Optional[TuiConfig] = load_config()
         self._theme_watcher = None
+        self._debounce_timer = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -343,8 +353,6 @@ class OmarchyWledTui(App):
     def _build_main(self) -> Vertical:
         cfg = self._config
         theme = self.theme_colors
-
-        brightness_pct = round(cfg.brightness / 255 * 100)
 
         return Vertical(
             Label("Configuration", classes="section-label"),
@@ -365,7 +373,7 @@ class OmarchyWledTui(App):
             ),
             Horizontal(
                 Label("Brightness (0-100%):", classes="field-label"),
-                Input(value=str(brightness_pct), id="cfg-brightness", classes="field-input"),
+                Input(value=str(cfg.brightness_pct), id="cfg-brightness", classes="field-input"),
                 classes="field-row",
             ),
             Horizontal(
@@ -376,7 +384,7 @@ class OmarchyWledTui(App):
             Label("Service", classes="section-label"),
             Horizontal(
                 Label("Auto-start:", id="service-label", classes="field-label"),
-                Switch(value=ServiceController(cfg.ip).is_active(), id="cfg-service"),
+                Switch(value=False, id="cfg-service"),
                 classes="field-row",
             ),
             Label("Current color", classes="section-label"),
@@ -392,6 +400,16 @@ class OmarchyWledTui(App):
     def on_mount(self) -> None:
         self._start_theme_watcher()
         self._refresh_color_preview()
+        self.call_after_refresh(self._update_service_switch)
+
+    def _update_service_switch(self) -> None:
+        try:
+            cfg = self._current_config_from_ui()
+            if cfg.ip:
+                active = ServiceController(cfg.ip).is_active()
+                self.query_one("#cfg-service", Switch).value = active
+        except Exception:
+            pass
 
     def _start_theme_watcher(self) -> None:
         self.set_interval(2.0, self._check_theme)
@@ -413,16 +431,23 @@ class OmarchyWledTui(App):
         except Exception:
             pass
 
+    def _refresh_color_preview_with_sender(self, cfg: TuiConfig, sender) -> None:
+        from omarchy_wled import make_source, apply_saturation
+        source = make_source(cfg.source)
+        color = source.read()
+        color = apply_saturation(*color, cfg.saturation)
+        try:
+            self.query_one(ColorPreview).color = color
+        except Exception:
+            pass
+        if cfg.ip:
+            sender(cfg.ip, *color, cfg.brightness)
+
     def _refresh_color_preview(self) -> None:
         try:
+            from omarchy_wled import send_color_to_wled
             cfg = self._current_config_from_ui()
-            from omarchy_wled import make_source, apply_saturation, send_color_to_wled
-            source = make_source(cfg.source)
-            color = source.read()
-            color = apply_saturation(*color, cfg.saturation)
-            self.query_one(ColorPreview).color = color
-            if cfg.ip:
-                send_color_to_wled(cfg.ip, *color, cfg.brightness)
+            self._refresh_color_preview_with_sender(cfg, send_color_to_wled)
         except Exception:
             pass
 
@@ -430,10 +455,9 @@ class OmarchyWledTui(App):
         try:
             ip = self.query_one("#cfg-ip", Input).value.strip()
             source = self.query_one("#cfg-source", Select).value or "accent"
-            brightness_pct = float(self.query_one("#cfg-brightness", Input).value or 100)
-            brightness = round(max(0, min(100, brightness_pct)) / 100 * 255)
+            pct = float(self.query_one("#cfg-brightness", Input).value or 100)
             saturation = float(self.query_one("#cfg-saturation", Input).value or 1.2)
-            return TuiConfig(ip=ip, source=str(source), brightness=brightness, saturation=saturation)
+            return TuiConfig.from_brightness_pct(ip=ip, pct=int(pct), source=str(source), saturation=saturation)
         except (NoMatches, ValueError):
             return self._config or TuiConfig(ip="")
 
@@ -446,13 +470,19 @@ class OmarchyWledTui(App):
         self.mount(self._build_main(), before="#status-bar")
         self._refresh_color_preview()
 
+    def _schedule_refresh(self) -> None:
+        """Debounce: cancel pending refresh and schedule a new one 300ms out."""
+        if self._debounce_timer is not None:
+            self._debounce_timer.stop()
+        self._debounce_timer = self.set_timer(0.3, self._refresh_color_preview)
+
     @on(Input.Changed, "#cfg-brightness")
     def on_brightness_changed(self, _) -> None:
-        self._refresh_color_preview()
+        self._schedule_refresh()
 
     @on(Input.Changed, "#cfg-saturation")
     def on_saturation_changed(self, _) -> None:
-        self._refresh_color_preview()
+        self._schedule_refresh()
 
     @on(Select.Changed, "#cfg-source")
     def on_source_changed(self, _) -> None:
