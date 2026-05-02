@@ -412,12 +412,20 @@ class OmarchyWledTui(App):
             pass
 
     def _start_theme_watcher(self) -> None:
+        self._last_theme_name: Optional[str] = None
         self.set_interval(2.0, self._check_theme)
 
     def _check_theme(self) -> None:
+        try:
+            name = THEME_NAME_FILE.read_text().strip()
+        except OSError:
+            return
+        if name == self._last_theme_name:
+            return
+        self._last_theme_name = name
         new_theme = _load_theme()
-        if new_theme != self.theme_colors:
-            self.theme_colors = new_theme
+        self.theme_colors = new_theme
+        self._refresh_color_preview()
 
     def watch_theme_colors(self, theme: TuiTheme) -> None:
         self.app.dark = True
@@ -430,7 +438,6 @@ class OmarchyWledTui(App):
             self.refresh_css()
         except Exception:
             pass
-        self._refresh_color_preview()
 
     def _refresh_color_preview_with_sender(self, cfg: TuiConfig, sender) -> None:
         from omarchy_wled import make_source, apply_saturation
