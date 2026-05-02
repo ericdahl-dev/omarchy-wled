@@ -57,10 +57,11 @@ class BgColorSource:
         return str(BACKGROUND_LINK.readlink())
 
     def watch_path(self) -> Path:
-        return BACKGROUND_LINK
+        return BACKGROUND_LINK.parent / "sentinel"
 
     def is_trigger(self, event_path: str) -> bool:
-        return Path(event_path).resolve() == BACKGROUND_LINK.resolve()
+        return Path(event_path).parent == BACKGROUND_LINK.parent and \
+               Path(event_path).name == BACKGROUND_LINK.name
 
 
 def make_source(name: str) -> ThemeColorSource | BgColorSource:
