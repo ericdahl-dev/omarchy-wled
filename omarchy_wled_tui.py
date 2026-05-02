@@ -292,6 +292,10 @@ class SetupScreen(Static):
             return
         self.post_message(SetupScreen.Done(ip))
 
+    @on(Input.Submitted, "#setup-ip")
+    def on_ip_submitted(self, _) -> None:
+        self.on_continue()
+
     class Done(Message):
         def __init__(self, ip: str) -> None:
             super().__init__()
