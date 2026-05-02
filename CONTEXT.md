@@ -12,26 +12,29 @@ Sync color from an [Omarchy](https://omarchy.org) desktop environment to a [WLED
 
 **Theme** — an Omarchy color scheme. Lives under `~/.config/omarchy/current/theme/`. A change is detected by watching `theme.name`, which is rewritten on theme switch.
 
-**Wallpaper / Background** — the current desktop background image, symlinked at `~/.config/omarchy/current/background`. Average color is computed by resizing to 1×1 via Pillow (LANCZOS).
+**Wallpaper / Background** — the current desktop background image, symlinked at `~/.config/omarchy/current/background`. Average color is computed by iterating all pixels in linear light (γ=2.2 decode → average → re-encode).
 
 **WLED** — an open-source LED controller firmware. Accepts color via HTTP POST to `/json/state` with a JSON payload `{ on, bri, seg[0].col[0]: [r,g,b] }`.
 
-**Saturation boost** — scaling the HSV saturation channel before sending. Accent defaults to 1.2×; fg/bg default to 1.0×. Overridable via `-s`.
+**Saturation boost** — scaling the HSV saturation channel before sending. Accent defaults to 1.2×; fg/bg default to 1.0×. Overridable via `-saturation`.
 
-**Sentinel** — a value that changes when the color source changes (e.g. file mtime, symlink target). Used by the poll fallback only — not part of the `ColorSource` protocol.
+**Sentinel** — a value that changes when the color source changes (e.g. file mtime, symlink target). Used by the poll fallback only — not part of the `ColorSource` interface.
 
-**Poll fallback** — when `watchdog` is not installed, `_poll()` runs a 1-second loop checking the sentinel value instead of using filesystem events.
+**Poll fallback** — when `fsnotify` cannot initialise a watcher (unusual on Linux), `poll()` runs a 1-second loop checking the sentinel value instead of using filesystem events.
 
-**Seam** — the `ColorSource` protocol: `read()`, `watch_path()`, `is_trigger()`. Adding a new source means implementing this protocol only.
+**Seam** — the `ColorSource` interface: `Read()`, `WatchDir()`, `IsTrigger()`. Adding a new source means implementing this interface only.
 
 ## File Layout
 
 ```
-omarchy_wled.py         — all logic (single-file project)
-test_omarchy_wled.py    — pytest suite
+main.go                 — Go CLI binary (all core logic, single-file)
+main_test.go            — Go test suite
+omarchy_wled.py         — Python source (used by TUI only)
+omarchy_wled_tui.py     — Textual TUI (omarchy-wled-tui entry point)
+test_omarchy_wled.py    — Python pytest suite (covers omarchy_wled.py)
 omarchy-wled@.service   — systemd user service template
-PKGBUILD                — AUR package definition
-pyproject.toml          — Python package metadata
+PKGBUILD                — AUR package definition (Go build)
+pyproject.toml          — Python package metadata (TUI only)
 ```
 
 ## Key Paths (runtime)
@@ -40,4 +43,6 @@ pyproject.toml          — Python package metadata
 ~/.config/omarchy/current/theme/colors.toml   — accent/fg/bg hex values
 ~/.config/omarchy/current/theme.name          — rewritten on theme switch (watch trigger)
 ~/.config/omarchy/current/background          — symlink to current wallpaper image
+~/.config/omarchy-wled/config.toml            — optional saved settings (ip, source, brightness, saturation)
 ```
+

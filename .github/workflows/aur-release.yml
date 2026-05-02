@@ -1,4 +1,4 @@
-name: AUR Release
+name: Release
 
 on:
   push:
@@ -6,7 +6,52 @@ on:
       - "v*"
 
 jobs:
+  github-release:
+    name: Build & publish GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build linux/amd64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+        run: go build -trimpath -ldflags="-s -w" -o omarchy-wled_linux_amd64 .
+
+      - name: Build linux/arm64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: arm64
+        run: go build -trimpath -ldflags="-s -w" -o omarchy-wled_linux_arm64 .
+
+      - name: Package binaries
+        run: |
+          tar czf omarchy-wled_${{ github.ref_name }}_linux_amd64.tar.gz \
+            --transform 's|omarchy-wled_linux_amd64|omarchy-wled|' \
+            omarchy-wled_linux_amd64 README.md omarchy-wled@.service
+          tar czf omarchy-wled_${{ github.ref_name }}_linux_arm64.tar.gz \
+            --transform 's|omarchy-wled_linux_arm64|omarchy-wled|' \
+            omarchy-wled_linux_arm64 README.md omarchy-wled@.service
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2.2.2
+        with:
+          generate_release_notes: true
+          files: |
+            omarchy-wled_${{ github.ref_name }}_linux_amd64.tar.gz
+            omarchy-wled_${{ github.ref_name }}_linux_arm64.tar.gz
+
   aur-release:
+    name: Publish to AUR
     runs-on: ubuntu-latest
     permissions:
       contents: read
