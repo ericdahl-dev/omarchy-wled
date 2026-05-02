@@ -285,19 +285,40 @@ def _poll(
 # CLI
 # ---------------------------------------------------------------------------
 
+def _load_tui_config() -> dict:
+    """Load saved TUI config as CLI defaults, if it exists."""
+    config_path = Path.home() / ".config" / "omarchy-wled" / "config.toml"
+    if not config_path.exists():
+        return {}
+    try:
+        import tomllib
+        data = tomllib.loads(config_path.read_text())
+        return {
+            "ip": data.get("ip"),
+            "source": data.get("source"),
+            "brightness": data.get("brightness"),
+            "saturation": data.get("saturation"),
+        }
+    except Exception:
+        return {}
+
+
 def main() -> None:
+    cfg = _load_tui_config()
+
     parser = argparse.ArgumentParser(description="Sync Omarchy accent color to WLED")
-    parser.add_argument("wled_ip", help="IP address or hostname of WLED device")
+    parser.add_argument("wled_ip", nargs="?", default=cfg.get("ip"),
+        help="IP address or hostname of WLED device")
     parser.add_argument(
-        "--source", choices=["accent", "fg", "bg"], default="accent",
+        "--source", choices=["accent", "fg", "bg"], default=cfg.get("source", "accent"),
         help="Color source: accent (theme accent color) or bg (wallpaper average, requires Pillow)"
     )
     parser.add_argument(
-        "-s", "--saturation", type=float, default=None, metavar="SCALE",
+        "-s", "--saturation", type=float, default=cfg.get("saturation"), metavar="SCALE",
         help="Saturation multiplier (0.0=greyscale, 1.0=unchanged, >1.0=boost, default 1.2 for accent, 1.0 otherwise)"
     )
     parser.add_argument(
-        "-b", "--brightness", type=int, default=255, metavar="0-255",
+        "-b", "--brightness", type=int, default=cfg.get("brightness", 255), metavar="0-255",
         help="LED brightness (0-255, default 255)"
     )
     parser.add_argument(
@@ -305,6 +326,9 @@ def main() -> None:
         help="Send current color once and exit (no watching)"
     )
     args = parser.parse_args()
+
+    if not args.wled_ip:
+        parser.error("wled_ip is required (no config file found at ~/.config/omarchy-wled/config.toml)")
 
     if args.saturation is None:
         args.saturation = 1.2 if args.source == "accent" else 1.0
