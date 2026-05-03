@@ -498,7 +498,8 @@ func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts
 		"LED count for spatial fade (0 = fetch from WLED /json/info)")
 	once := fs.Bool("once", false, "Send current color once and exit (no watching)")
 	fs.Usage = func() {
-		fmt.Fprintf(output, "Usage: omarchy-wled [options] [WLED_IP]\n\nOptions:\n")
+		fmt.Fprintf(output, "Usage: omarchy-wled [options] [WLED_IP]\n")
+		fmt.Fprintf(output, "   or: omarchy-wled tui\n\nOptions:\n")
 		fs.PrintDefaults()
 	}
 
@@ -533,6 +534,14 @@ func validateCli(opts *cliOpts) error {
 }
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "tui" {
+		if err := runTUI(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	cfg := loadConfig()
 	opts, err := parseArgs(os.Args[1:], cfg, os.Stderr)
 	if err != nil {
@@ -550,6 +559,7 @@ func main() {
 	if opts.wledIP == "" {
 		fmt.Fprintln(os.Stderr,
 			"error: WLED IP is required (pass as argument or set ip in ~/.config/omarchy-wled/config.toml)")
+		fmt.Fprintln(os.Stderr, "Configure with: omarchy-wled tui")
 		os.Exit(1)
 	}
 
