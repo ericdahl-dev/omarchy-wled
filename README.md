@@ -33,6 +33,8 @@ Options:
   -source {accent,fg,foreground,bg}  Color source: accent (default), fg / foreground (colors.toml `foreground` = UI font color), or bg (wallpaper average)
   -brightness 0-255       LED brightness (default 255)
   -saturation SCALE       Saturation multiplier (0.0=greyscale, 1.0=unchanged, >1.0=boost; default 1.2 for accent, 1.0 for fg/bg)
+  -gradient               With `-source bg`, sample left/right wallpaper halves and drive WLED’s Gradient effect (two color stops)
+  -gradient-fx ID         WLED effect index for Gradient (stock firmware uses 46; override if yours differs)
   -once                   Send once and exit
   -v, -version            Print version and exit (release builds show tag, e.g. v1.2.3)
 ```
@@ -48,6 +50,9 @@ omarchy-wled 192.168.1.50 -source fg
 
 # Use wallpaper average color at 80% brightness
 omarchy-wled 192.168.1.50 -source bg -brightness 200
+
+# Horizontal wallpaper gradient (left/right halves → WLED Gradient effect)
+omarchy-wled 192.168.1.50 -source bg -gradient
 
 # Boost saturation (accent already defaults to 1.2)
 omarchy-wled 192.168.1.50 -saturation 1.5
@@ -66,6 +71,9 @@ ip = "192.168.1.50"
 source = "accent"
 brightness = 255
 saturation = 1.2
+# Optional (bg + gradient); gradient_fx matches WLED’s effect list (46 = Gradient on stock WLED)
+# gradient = true
+# gradient_fx = 46
 ```
 
 ## Auto-start (systemd)

@@ -183,6 +183,41 @@ func TestSendColorToWLEDReturnsErrorOnBadStatus(t *testing.T) {
 	}
 }
 
+func TestSendGradientToWLEDPostsCorrectPayload(t *testing.T) {
+	srv, body := wledServer(t, http.StatusOK)
+	orig := wledURLOverride
+	wledURLOverride = srv.URL + "/json/state"
+	t.Cleanup(func() { wledURLOverride = orig })
+
+	left := [3]uint8{255, 10, 20}
+	right := [3]uint8{5, 6, 250}
+	if err := sendGradientToWLED("ignored", left, right, 199, 46); err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body(), &payload); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if payload["bri"].(float64) != 199 {
+		t.Errorf("bri: got %v want 199", payload["bri"])
+	}
+	seg0 := payload["seg"].([]any)[0].(map[string]any)
+	if int(seg0["fx"].(float64)) != 46 {
+		t.Errorf("fx: got %v want 46", seg0["fx"])
+	}
+	col := seg0["col"].([]any)
+	checkSlot := func(slot int, wantR, wantG, wantB int) {
+		t.Helper()
+		ch := col[slot].([]any)
+		if int(ch[0].(float64)) != wantR || int(ch[1].(float64)) != wantG || int(ch[2].(float64)) != wantB {
+			t.Errorf("col[%d]: got %v,%v,%v want %d,%d,%d", slot, ch[0], ch[1], ch[2], wantR, wantG, wantB)
+		}
+	}
+	checkSlot(0, 255, 10, 20)
+	checkSlot(1, 5, 6, 250)
+	checkSlot(2, 0, 0, 0)
+}
+
 // ---------------------------------------------------------------------------
 // pushIfChanged
 // ---------------------------------------------------------------------------
@@ -211,7 +246,7 @@ func TestPushIfChangedSendsOnFirstCall(t *testing.T) {
 
 	tracker := &pushTracker{}
 	src := &fixedColorSource{color: [3]uint8{100, 150, 200}}
-	pushIfChanged(src, tracker, "ignored", 255, 1.0)
+	pushIfChanged(src, tracker, "ignored", 255, 1.0, pushOpts{})
 	if sent != 1 {
 		t.Errorf("expected 1 send, got %d", sent)
 	}
@@ -231,10 +266,59 @@ func TestPushIfChangedDoesNotResendSameColor(t *testing.T) {
 
 	tracker := &pushTracker{}
 	src := &fixedColorSource{color: [3]uint8{100, 150, 200}}
-	pushIfChanged(src, tracker, "ignored", 255, 1.0)
-	pushIfChanged(src, tracker, "ignored", 255, 1.0)
+	pushIfChanged(src, tracker, "ignored", 255, 1.0, pushOpts{})
+	pushIfChanged(src, tracker, "ignored", 255, 1.0, pushOpts{})
 	if sent != 1 {
 		t.Errorf("expected 1 send (deduplicated), got %d", sent)
+	}
+}
+
+func TestPushIfChangedGradientDedupes(t *testing.T) {
+	var sent int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sent++
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	origURL := wledURLOverride
+	wledURLOverride = srv.URL + "/json/state"
+	t.Cleanup(func() { wledURLOverride = origURL })
+
+	dir := t.TempDir()
+	img := image.NewRGBA(image.Rect(0, 0, 4, 1))
+	for x := 0; x < 2; x++ {
+		img.Set(x, 0, color.RGBA{R: 255, A: 255})
+	}
+	for x := 2; x < 4; x++ {
+		img.Set(x, 0, color.RGBA{B: 255, A: 255})
+	}
+	imgPath := filepath.Join(dir, "bg.png")
+	f, err := os.Create(imgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	f.Close()
+	link := filepath.Join(dir, "background")
+	if err := os.Symlink(imgPath, link); err != nil {
+		t.Fatal(err)
+	}
+
+	origOverride := wallpaperPathOverride
+	wallpaperPathOverride = link
+	t.Cleanup(func() { wallpaperPathOverride = origOverride })
+
+	tracker := &pushTracker{}
+	src := &BgColorSource{}
+	opts := pushOpts{bgGradient: true, gradientFX: defaultGradientEffectID}
+	pushIfChanged(src, tracker, "ignored", 255, 1.0, opts)
+	pushIfChanged(src, tracker, "ignored", 255, 1.0, opts)
+	if sent != 1 {
+		t.Errorf("expected 1 HTTP POST (deduped), got %d", sent)
 	}
 }
 
@@ -252,7 +336,7 @@ func TestPushIfChangedAppliesSaturation(t *testing.T) {
 
 	tracker := &pushTracker{}
 	// saturation=0 should make r==g==b
-	pushIfChanged(&fixedColorSource{color: [3]uint8{100, 200, 150}}, tracker, "ignored", 255, 0.0)
+	pushIfChanged(&fixedColorSource{color: [3]uint8{100, 200, 150}}, tracker, "ignored", 255, 0.0, pushOpts{})
 
 	var payload map[string]any
 	if err := json.Unmarshal(captured, &payload); err != nil {
@@ -283,10 +367,10 @@ func TestPollTickSkipsSendWhenStateMatchesRead(t *testing.T) {
 
 	c := [3]uint8{100, 150, 200}
 	tracker := &pushTracker{}
-	tracker.lastSentRGB = &c
+	tracker.lastSolid = &c
 	src := &fixedColorSource{color: c, sentinel: "s1"}
 	var last string
-	pollTick("ignored", 255, 1.0, src, tracker, &last)
+	pollTick("ignored", 255, 1.0, src, tracker, &last, pushOpts{})
 	if sent != 0 {
 		t.Errorf("want 0 HTTP sends when last_color matches read(), got %d", sent)
 	}
@@ -337,6 +421,43 @@ func TestReadBgColorAveragesLinear(t *testing.T) {
 
 // Like test_omarchy_wled.test_read_bg_color_linear_avg_brighter_than_naive on main:
 // half red / half black — linear-spot average should be well above naive 127.
+func TestReadBgGradientHorizontalHalves(t *testing.T) {
+	dir := t.TempDir()
+	img := image.NewRGBA(image.Rect(0, 0, 4, 2))
+	for y := 0; y < 2; y++ {
+		for x := 0; x < 2; x++ {
+			img.Set(x, y, color.RGBA{R: 255, A: 255})
+		}
+		for x := 2; x < 4; x++ {
+			img.Set(x, y, color.RGBA{B: 255, A: 255})
+		}
+	}
+	imgPath := filepath.Join(dir, "bg.png")
+	f, err := os.Create(imgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	f.Close()
+	link := filepath.Join(dir, "background")
+	if err := os.Symlink(imgPath, link); err != nil {
+		t.Fatal(err)
+	}
+	left, right, err := readBgGradientHorizontal(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left[0] <= left[2] {
+		t.Errorf("expected red-dominant left half, got %v", left)
+	}
+	if right[2] <= right[0] {
+		t.Errorf("expected blue-dominant right half, got %v", right)
+	}
+}
+
 func TestReadBgColorStripLinearAvgBrighterThanNaive(t *testing.T) {
 	dir := t.TempDir()
 	img := image.NewRGBA(image.Rect(0, 0, 2, 1))
@@ -467,5 +588,30 @@ func TestParseArgsUnknownFlag(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "flag provided but not defined") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateCliGradientRequiresBg(t *testing.T) {
+	if err := validateCli(&cliOpts{bgGradient: true, sourceName: "accent"}); err == nil {
+		t.Fatal("expected error when -gradient without bg source")
+	}
+	if err := validateCli(&cliOpts{bgGradient: true, sourceName: "bg"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseArgsGradientFromConfig(t *testing.T) {
+	opts, err := parseArgs([]string{}, map[string]string{
+		"gradient":    "true",
+		"gradient_fx": "46",
+	}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.bgGradient {
+		t.Fatal("expected bgGradient from config")
+	}
+	if opts.gradientFX != 46 {
+		t.Fatalf("gradientFX: got %d want 46", opts.gradientFX)
 	}
 }
