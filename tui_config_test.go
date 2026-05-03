@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ericdahl-dev/omarchy-wled/internal/paths"
+	"github.com/ericdahl-dev/omarchy-wled/internal/wled"
 )
 
 func TestTuiConfigRoundTrip(t *testing.T) {
@@ -92,20 +95,21 @@ func TestPreviewSolidToWLED(t *testing.T) {
 	defer srv.Close()
 
 	root := t.TempDir()
-	colorsPath := filepath.Join(root, "colors.toml")
-	if err := os.WriteFile(colorsPath, []byte(`accent = "#82FB9C"
+	t.Setenv("HOME", root)
+	paths.Init()
+	if err := os.MkdirAll(filepath.Dir(paths.ColorsToml), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.ColorsToml, []byte(`accent = "#82FB9C"
 foreground = "#ddf7ff"
 background = "#0B0C16"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	origColors := colorsToml
-	colorsToml = colorsPath
-	t.Cleanup(func() { colorsToml = origColors })
 
-	origWLED := wledURLOverride
-	wledURLOverride = srv.URL + "/json/state"
-	t.Cleanup(func() { wledURLOverride = origWLED })
+	origWLED := wled.TestStatePostURL
+	wled.TestStatePostURL = srv.URL + "/json/state"
+	t.Cleanup(func() { wled.TestStatePostURL = origWLED })
 
 	if err := previewSolidToWLED("127.0.0.1", "accent", 255, 1.0); err != nil {
 		t.Fatal(err)

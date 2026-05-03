@@ -6,7 +6,7 @@ Sync color from an [Omarchy](https://omarchy.org) desktop environment to a [WLED
 
 ## Domain Glossary
 
-**Color Source** — anything that can produce an RGB color and describe what file to watch for changes. Three concrete sources exist: `accent` (theme accent key), `fg` / `foreground` (same — maps to the **`foreground`** key in `colors.toml`, Omarchy’s UI/font color), `bg` (wallpaper average). Implemented via `ThemeColorSource` and `BgColorSource`.
+**Color Source** — anything that can produce an RGB color and describe what file to watch for changes. Three concrete sources exist: `accent` (theme accent key), `fg` / `foreground` (same — maps to the **`foreground`** key in `colors.toml`, Omarchy’s UI/font color), `bg` (wallpaper average). In Go, `internal/source` implements this as the `Source` interface (`ThemeEntry` for TOML keys, `WallpaperAverage` for the background image).
 
 **Accent** — the highlight color defined in the Omarchy theme's `colors.toml`. Typically vivid but may be muted depending on the theme; boosted to 1.2× saturation by default.
 
@@ -22,14 +22,19 @@ Sync color from an [Omarchy](https://omarchy.org) desktop environment to a [WLED
 
 **Poll fallback** — when `fsnotify` cannot initialise a watcher (unusual on Linux), `poll()` runs a 1-second loop checking the sentinel value instead of using filesystem events.
 
-**Seam** — the `ColorSource` interface: `Read()`, `WatchDir()`, `IsTrigger()`. Adding a new source means implementing this interface only.
+**Seam** — the `source.Source` interface: `Read()`, `WatchDir()`, `IsTrigger()`, `Sentinel()`. Adding a new source means implementing this interface only.
 
 ## File Layout
 
 ```
-main.go                 — CLI, Color Source, push/watch/poll, config
-wallpaper.go            — Wallpaper / Background decode, γ pipeline, column→LED strip
-wled.go                 — WLED HTTP client (solid, spatial seg.i, LED count)
+main.go                 — CLI entry: paths.Init, flags, daemon loop orchestration
+internal/paths          — Omarchy + app paths under $HOME
+internal/color          — colors.toml hex parse; HSV saturation scaling
+internal/config         — flat config.toml load (regex)
+internal/wallpaper      — image decode, γ pipeline, column→LED strip
+internal/wled           — HTTP JSON to WLED (solid, spatial seg.i, LED count)
+internal/source         — Source interface; theme vs wallpaper implementations
+internal/daemon         — push dedupe, fsnotify watch, poll fallback
 main_test.go            — Go test suite
 omarchy_wled.py         — Python source (used by TUI only)
 omarchy_wled_tui.py     — Textual TUI (omarchy-wled-tui entry point)

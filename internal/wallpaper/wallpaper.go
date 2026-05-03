@@ -1,4 +1,5 @@
-package main
+// Package wallpaper decodes the Omarchy wallpaper symlink and runs the same γ pipeline as Python.
+package wallpaper
 
 import (
 	"fmt"
@@ -11,29 +12,24 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ericdahl-dev/omarchy-wled/internal/paths"
 	xdraw "golang.org/x/image/draw"
 )
 
-// wallpaperPathOverride, when non-empty (tests), is used instead of backgroundLink
-// for wallpaper symlink resolution.
-var wallpaperPathOverride string
+// AlternateSymlinkPath skips the real ~/.config/.../background path (unit tests point at a temp symlink).
+var AlternateSymlinkPath string
 
-func wallpaperSymlink() string {
-	if wallpaperPathOverride != "" {
-		return wallpaperPathOverride
+// CurrentSymlink returns the path we watch (live Omarchy tree or test override).
+func CurrentSymlink() string {
+	if AlternateSymlinkPath != "" {
+		return AlternateSymlinkPath
 	}
-	return backgroundLink
+	return paths.BackgroundLink
 }
 
-// wallpaperSrgbToLinearByte and wallpaperLinearToSrgbByte implement the same γ=2.2
-// pipeline as Python omarchy_wled.read_bg_color (PIL .point() LUTs). Values stay in 0–255.
 var wallpaperSrgbToLinearByte, wallpaperLinearToSrgbByte [256]uint8
 
 func init() {
-	initWallpaperGammaLookupTables()
-}
-
-func initWallpaperGammaLookupTables() {
 	for channel := 0; channel < 256; channel++ {
 		v := float64(channel)
 		wallpaperSrgbToLinearByte[channel] = uint8(math.Round(math.Pow(v/255.0, 2.2) * 255.0))
@@ -41,9 +37,35 @@ func initWallpaperGammaLookupTables() {
 	}
 }
 
-// wallpaperAverageFromRGBA applies the same γ pipeline as readBgColor on an RGBA
-// buffer (copy): linearize → Catmull-Rom 1×1 → encode back to sRGB bytes.
-func wallpaperAverageFromRGBA(rgba *image.RGBA) ([3]uint8, error) {
+// AverageSRGBFromFile is the wallpaper “average” after γ decode → 1×1 Catmull-Rom → γ encode.
+func AverageSRGBFromFile(wallpaperSymlinkPath string) ([3]uint8, error) {
+	resolvedImagePath, err := filepath.EvalSymlinks(wallpaperSymlinkPath)
+	if err != nil {
+		return [3]uint8{}, fmt.Errorf("cannot resolve wallpaper symlink: %w", err)
+	}
+
+	file, err := os.Open(resolvedImagePath)
+	if err != nil {
+		return [3]uint8{}, err
+	}
+	defer file.Close()
+
+	decoded, _, err := image.Decode(file)
+	if err != nil {
+		return [3]uint8{}, fmt.Errorf("cannot decode image %s: %w", resolvedImagePath, err)
+	}
+
+	bounds := decoded.Bounds()
+	if bounds.Dx()*bounds.Dy() == 0 {
+		return [3]uint8{}, fmt.Errorf("empty image")
+	}
+
+	rgbaWorking := image.NewRGBA(bounds)
+	draw.Draw(rgbaWorking, bounds, decoded, bounds.Min, draw.Src)
+	return averageFromRGBA(rgbaWorking)
+}
+
+func averageFromRGBA(rgba *image.RGBA) ([3]uint8, error) {
 	bounds := rgba.Bounds()
 	if bounds.Dx()*bounds.Dy() == 0 {
 		return [3]uint8{}, fmt.Errorf("empty image")
@@ -73,39 +95,8 @@ func cropRGBA(src *image.RGBA, r image.Rectangle) *image.RGBA {
 	return dst
 }
 
-// readBgColor returns the wallpaper “average” color in true display space.
-// Steps: decode → γ-decode each channel via LUT → high-quality downscale to 1×1
-// (weighted average, same role as PIL LANCZOS) → γ-encode back to sRGB bytes.
-func readBgColor(wallpaperSymlinkPath string) ([3]uint8, error) {
-	resolvedImagePath, err := filepath.EvalSymlinks(wallpaperSymlinkPath)
-	if err != nil {
-		return [3]uint8{}, fmt.Errorf("cannot resolve wallpaper symlink: %w", err)
-	}
-
-	file, err := os.Open(resolvedImagePath)
-	if err != nil {
-		return [3]uint8{}, err
-	}
-	defer file.Close()
-
-	decoded, _, err := image.Decode(file)
-	if err != nil {
-		return [3]uint8{}, fmt.Errorf("cannot decode image %s: %w", resolvedImagePath, err)
-	}
-
-	bounds := decoded.Bounds()
-	if bounds.Dx()*bounds.Dy() == 0 {
-		return [3]uint8{}, fmt.Errorf("empty image")
-	}
-
-	rgbaWorking := image.NewRGBA(bounds)
-	draw.Draw(rgbaWorking, bounds, decoded, bounds.Min, draw.Src)
-	return wallpaperAverageFromRGBA(rgbaWorking)
-}
-
-// readBgGradientHorizontal returns linear-space averages for the left and right
-// halves of the wallpaper (split at the horizontal midline).
-func readBgGradientHorizontal(wallpaperSymlinkPath string) (left, right [3]uint8, err error) {
+// LeftRightHalvesLinearAvg returns linear-space averages for the left and right image halves.
+func LeftRightHalvesLinearAvg(wallpaperSymlinkPath string) (left, right [3]uint8, err error) {
 	resolvedImagePath, err := filepath.EvalSymlinks(wallpaperSymlinkPath)
 	if err != nil {
 		return left, right, fmt.Errorf("cannot resolve wallpaper symlink: %w", err)
@@ -126,23 +117,21 @@ func readBgGradientHorizontal(wallpaperSymlinkPath string) (left, right [3]uint8
 	rgbaFull := image.NewRGBA(bounds)
 	draw.Draw(rgbaFull, bounds, decoded, bounds.Min, draw.Src)
 	if bounds.Dx() < 2 {
-		c, err := wallpaperAverageFromRGBA(rgbaFull)
+		c, err := averageFromRGBA(rgbaFull)
 		return c, c, err
 	}
 	midX := bounds.Min.X + bounds.Dx()/2
 	leftRect := image.Rect(bounds.Min.X, bounds.Min.Y, midX, bounds.Max.Y)
 	rightRect := image.Rect(midX, bounds.Min.Y, bounds.Max.X, bounds.Max.Y)
-	left, err = wallpaperAverageFromRGBA(cropRGBA(rgbaFull, leftRect))
+	left, err = averageFromRGBA(cropRGBA(rgbaFull, leftRect))
 	if err != nil {
 		return left, right, err
 	}
-	right, err = wallpaperAverageFromRGBA(cropRGBA(rgbaFull, rightRect))
+	right, err = averageFromRGBA(cropRGBA(rgbaFull, rightRect))
 	return left, right, err
 }
 
-// wallpaperColumnAverageRow collapses each vertical column to one sRGB pixel using the same
-// γ-linear averaging idea as readBgColor (average linear-proxy bytes, then γ-encode).
-func wallpaperColumnAverageRow(rgbaFull *image.RGBA) *image.RGBA {
+func columnAverageRow(rgbaFull *image.RGBA) *image.RGBA {
 	b := rgbaFull.Bounds()
 	w, h := b.Dx(), b.Dy()
 	out := image.NewRGBA(image.Rect(0, 0, w, 1))
@@ -168,9 +157,8 @@ func wallpaperColumnAverageRow(rgbaFull *image.RGBA) *image.RGBA {
 	return out
 }
 
-// wallpaperColumnAverageRowColorsForLEDs averages each wallpaper column vertically into one
-// sample per column, then Catmull-Rom rescales that 1×width row to ledCount (one RGB per LED).
-func wallpaperColumnAverageRowColorsForLEDs(wallpaperSymlinkPath string, ledCount int) ([][3]uint8, error) {
+// ColumnStripForLEDCount builds one sample per wallpaper column, then resamples to ledCount LEDs.
+func ColumnStripForLEDCount(wallpaperSymlinkPath string, ledCount int) ([][3]uint8, error) {
 	if ledCount <= 0 {
 		return nil, fmt.Errorf("ledCount must be positive")
 	}
@@ -193,7 +181,7 @@ func wallpaperColumnAverageRowColorsForLEDs(wallpaperSymlinkPath string, ledCoun
 	}
 	rgbaFull := image.NewRGBA(bounds)
 	draw.Draw(rgbaFull, bounds, decoded, bounds.Min, draw.Src)
-	rowRgba := wallpaperColumnAverageRow(rgbaFull)
+	rowRgba := columnAverageRow(rgbaFull)
 
 	pix := rowRgba.Pix
 	for i := 0; i < len(pix); i += 4 {
