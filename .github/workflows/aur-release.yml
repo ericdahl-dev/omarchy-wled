@@ -24,14 +24,14 @@ jobs:
           CGO_ENABLED: "0"
           GOOS: linux
           GOARCH: amd64
-        run: go build -trimpath -ldflags="-s -w" -o omarchy-wled_linux_amd64 .
+        run: go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o omarchy-wled_linux_amd64 .
 
       - name: Build linux/arm64
         env:
           CGO_ENABLED: "0"
           GOOS: linux
           GOARCH: arm64
-        run: go build -trimpath -ldflags="-s -w" -o omarchy-wled_linux_arm64 .
+        run: go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o omarchy-wled_linux_arm64 .
 
       - name: Package binaries
         run: |

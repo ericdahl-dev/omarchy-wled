@@ -225,6 +225,12 @@ def test_accent_source_triggers_on_theme_name_file(tmp_path):
     assert src.is_trigger(str(THEME_NAME_FILE))
 
 
+def test_accent_source_triggers_on_colors_toml():
+    src = ThemeColorSource()
+    from omarchy_wled import COLORS_TOML
+    assert src.is_trigger(str(COLORS_TOML))
+
+
 def test_bg_source_triggers_on_background_link(tmp_path):
     src = BgColorSource()
     from omarchy_wled import BACKGROUND_LINK
@@ -262,6 +268,12 @@ def test_fg_source_triggers_on_theme_name_file():
 
 def test_make_source_fg_returns_theme_source():
     src = make_source("fg")
+    assert isinstance(src, ThemeColorSource)
+    assert src._key == "foreground"
+
+
+def test_make_source_foreground_alias():
+    src = make_source("foreground")
     assert isinstance(src, ThemeColorSource)
     assert src._key == "foreground"
 

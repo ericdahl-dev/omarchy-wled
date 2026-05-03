@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"math"
 	"net/http"
 	"os"
@@ -21,6 +23,9 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 )
+
+// version is set at link time: go build -ldflags "-X main.version=v1.2.3"
+var version = "dev"
 
 // ---------------------------------------------------------------------------
 // Runtime paths (resolved from $HOME at startup)
@@ -263,16 +268,26 @@ func (s *ThemeColorSource) WatchDir() string {
 
 func (s *ThemeColorSource) IsTrigger(path string) bool {
 	a, _ := filepath.Abs(path)
-	b, _ := filepath.Abs(themeNameFile)
-	return a == b
+	tn, _ := filepath.Abs(themeNameFile)
+	if a == tn {
+		return true
+	}
+	ct, _ := filepath.Abs(colorsToml)
+	return a == ct
 }
 
+// Sentinel combines theme.name and colors.toml mtimes so poll/watch react when
+// either changes (same directory events can arrive for either file).
 func (s *ThemeColorSource) Sentinel() (string, error) {
-	fi, err := os.Stat(themeNameFile)
+	tfi, err := os.Stat(themeNameFile)
 	if err != nil {
 		return "", err
 	}
-	return strconv.FormatInt(fi.ModTime().UnixNano(), 10), nil
+	out := strconv.FormatInt(tfi.ModTime().UnixNano(), 10)
+	if cfi, err := os.Stat(colorsToml); err == nil {
+		out += ":" + strconv.FormatInt(cfi.ModTime().UnixNano(), 10)
+	}
+	return out, nil
 }
 
 // BgColorSource computes the average color of the current Omarchy wallpaper.
@@ -305,7 +320,7 @@ func makeSource(name string) ColorSource {
 	switch name {
 	case "bg":
 		return &BgColorSource{}
-	case "fg":
+	case "fg", "foreground":
 		return &ThemeColorSource{key: "foreground"}
 	default:
 		return &ThemeColorSource{key: "accent"}
@@ -422,13 +437,18 @@ func loadConfig() map[string]string {
 	return cfg
 }
 
-// ---------------------------------------------------------------------------
-// main
-// ---------------------------------------------------------------------------
+// cliOpts holds parsed flags and positional args after parseArgs.
+type cliOpts struct {
+	sourceName   string
+	brightness   int
+	saturationIn float64 // from flag; -1 means use per-source default
+	once         bool
+	showVersion  bool
+	wledIP       string
+}
 
-func main() {
-	cfg := loadConfig()
-
+// parseArgs parses argv using the same defaults as loadConfig merge rules.
+func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts, error) {
 	defaultSource := cfg["source"]
 	if defaultSource == "" {
 		defaultSource = "accent"
@@ -439,7 +459,6 @@ func main() {
 			defaultBrightness = n
 		}
 	}
-	// Use -1 as sentinel for "not set" so we can apply per-source default later.
 	defaultSaturation := -1.0
 	if v, ok := cfg["saturation"]; ok {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
@@ -447,51 +466,87 @@ func main() {
 		}
 	}
 
-	sourceName := flag.String("source", defaultSource,
+	fs := flag.NewFlagSet("omarchy-wled", flag.ContinueOnError)
+	fs.SetOutput(output)
+
+	opts := &cliOpts{}
+	fs.BoolVar(&opts.showVersion, "v", false, "Print version and exit")
+	fs.BoolVar(&opts.showVersion, "version", false, "Print version and exit")
+
+	sourceName := fs.String("source", defaultSource,
 		"Color source: accent (default), fg (foreground), or bg (wallpaper average)")
-	brightness := flag.Int("brightness", defaultBrightness,
+	brightness := fs.Int("brightness", defaultBrightness,
 		"LED brightness 0-255 (default 255)")
-	saturationFlag := flag.Float64("saturation", defaultSaturation,
+	saturationFlag := fs.Float64("saturation", defaultSaturation,
 		"Saturation multiplier (0.0=greyscale, 1.0=unchanged, >1.0=boost;\n"+
 			"default 1.2 for accent, 1.0 for fg/bg)")
-	once := flag.Bool("once", false, "Send current color once and exit (no watching)")
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(),
-			"Usage: omarchy-wled [options] [WLED_IP]\n\nOptions:\n")
-		flag.PrintDefaults()
+	once := fs.Bool("once", false, "Send current color once and exit (no watching)")
+	fs.Usage = func() {
+		fmt.Fprintf(output, "Usage: omarchy-wled [options] [WLED_IP]\n\nOptions:\n")
+		fs.PrintDefaults()
 	}
-	flag.Parse()
 
-	// The WLED IP can be a positional argument or come from config.
-	wledIP := cfg["ip"]
-	if flag.NArg() > 0 {
-		wledIP = flag.Arg(0)
+	err := fs.Parse(args)
+	if err != nil {
+		return nil, err
 	}
-	if wledIP == "" {
+
+	opts.sourceName = *sourceName
+	opts.brightness = *brightness
+	opts.saturationIn = *saturationFlag
+	opts.once = *once
+
+	opts.wledIP = cfg["ip"]
+	if fs.NArg() > 0 {
+		opts.wledIP = fs.Arg(0)
+	}
+	return opts, nil
+}
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
+func main() {
+	cfg := loadConfig()
+	opts, err := parseArgs(os.Args[1:], cfg, os.Stderr)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			os.Exit(0)
+		}
+		os.Exit(2)
+	}
+
+	if opts.showVersion {
+		fmt.Println(version)
+		os.Exit(0)
+	}
+
+	if opts.wledIP == "" {
 		fmt.Fprintln(os.Stderr,
 			"error: WLED IP is required (pass as argument or set ip in ~/.config/omarchy-wled/config.toml)")
 		os.Exit(1)
 	}
 
-	saturation := *saturationFlag
+	saturation := opts.saturationIn
 	if saturation < 0 {
-		if *sourceName == "accent" {
+		if opts.sourceName == "accent" {
 			saturation = 1.2
 		} else {
 			saturation = 1.0
 		}
 	}
 
-	src := makeSource(*sourceName)
+	src := makeSource(opts.sourceName)
 
-	if *once {
+	if opts.once {
 		st := &state{}
-		pushIfChanged(src, st, wledIP, *brightness, saturation)
+		pushIfChanged(src, st, opts.wledIP, opts.brightness, saturation)
 		return
 	}
 
-	if err := watchSource(wledIP, *brightness, saturation, src); err != nil {
+	if err := watchSource(opts.wledIP, opts.brightness, saturation, src); err != nil {
 		fmt.Fprintf(os.Stderr, "Watch failed: %v — falling back to polling\n", err)
-		poll(wledIP, *brightness, saturation, src)
+		poll(opts.wledIP, opts.brightness, saturation, src)
 	}
 }

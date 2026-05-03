@@ -15,7 +15,7 @@ build() {
     cd "$pkgname-$pkgver"
     export CGO_ENABLED=0
     export GOFLAGS="-mod=mod"
-    go build -trimpath -ldflags="-s -w" -o omarchy-wled .
+    go build -trimpath -ldflags="-s -w -X main.version=$pkgver" -o omarchy-wled .
 }
 
 package() {

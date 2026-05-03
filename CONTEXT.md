@@ -6,11 +6,11 @@ Sync color from an [Omarchy](https://omarchy.org) desktop environment to a [WLED
 
 ## Domain Glossary
 
-**Color Source** — anything that can produce an RGB color and describe what file to watch for changes. Three concrete sources exist: `accent` (theme accent key), `fg` (theme foreground key), `bg` (wallpaper average). Implemented via `ThemeColorSource` and `BgColorSource`.
+**Color Source** — anything that can produce an RGB color and describe what file to watch for changes. Three concrete sources exist: `accent` (theme accent key), `fg` / `foreground` (same — maps to the **`foreground`** key in `colors.toml`, Omarchy’s UI/font color), `bg` (wallpaper average). Implemented via `ThemeColorSource` and `BgColorSource`.
 
 **Accent** — the highlight color defined in the Omarchy theme's `colors.toml`. Typically vivid but may be muted depending on the theme; boosted to 1.2× saturation by default.
 
-**Theme** — an Omarchy color scheme. Lives under `~/.config/omarchy/current/theme/`. A change is detected by watching `theme.name`, which is rewritten on theme switch.
+**Theme** — an Omarchy color scheme. Lives under `~/.config/omarchy/current/theme/`. Accent/fg sources watch `~/.config/omarchy/current/` for writes to **`theme.name`** (theme switch) and **`theme/colors.toml`** (color edits), so updates are not missed when only one file changes.
 
 **Wallpaper / Background** — the current desktop background image, symlinked at `~/.config/omarchy/current/background`. Average color is computed by iterating all pixels in linear light (γ=2.2 decode → average → re-encode).
 

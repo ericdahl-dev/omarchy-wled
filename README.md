@@ -30,10 +30,11 @@ install -Dm755 omarchy-wled ~/.local/bin/omarchy-wled
 omarchy-wled [options] [WLED_IP]
 
 Options:
-  -source {accent,fg,bg}  Color source: accent (default), fg (foreground), or bg (wallpaper average)
+  -source {accent,fg,foreground,bg}  Color source: accent (default), fg / foreground (colors.toml `foreground` = UI font color), or bg (wallpaper average)
   -brightness 0-255       LED brightness (default 255)
   -saturation SCALE       Saturation multiplier (0.0=greyscale, 1.0=unchanged, >1.0=boost; default 1.2 for accent, 1.0 for fg/bg)
   -once                   Send once and exit
+  -v, -version            Print version and exit (release builds show tag, e.g. v1.2.3)
 ```
 
 ### Examples

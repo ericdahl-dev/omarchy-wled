@@ -38,13 +38,17 @@ class ThemeColorSource:
         return _read_color_key(self._key, COLORS_TOML)
 
     def sentinel(self) -> object:
-        return THEME_NAME_FILE.stat().st_mtime
+        parts = [THEME_NAME_FILE.stat().st_mtime]
+        if COLORS_TOML.exists():
+            parts.append(COLORS_TOML.stat().st_mtime)
+        return tuple(parts)
 
     def watch_path(self) -> Path:
         return THEME_NAME_FILE
 
     def is_trigger(self, event_path: str) -> bool:
-        return Path(event_path).resolve() == THEME_NAME_FILE.resolve()
+        p = Path(event_path).resolve()
+        return p == THEME_NAME_FILE.resolve() or p == COLORS_TOML.resolve()
 
 
 class BgColorSource:
@@ -67,7 +71,9 @@ class BgColorSource:
 def make_source(name: str) -> ThemeColorSource | BgColorSource:
     if name == "bg":
         return BgColorSource()
-    return ThemeColorSource("foreground" if name == "fg" else "accent")
+    if name in ("fg", "foreground"):
+        return ThemeColorSource("foreground")
+    return ThemeColorSource("accent")
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +317,7 @@ def main() -> None:
     parser.add_argument("wled_ip", nargs="?", default=cfg.get("ip"),
         help="IP address or hostname of WLED device")
     parser.add_argument(
-        "--source", choices=["accent", "fg", "bg"], default=cfg.get("source", "accent"),
+        "--source", choices=["accent", "fg", "foreground", "bg"], default=cfg.get("source", "accent"),
         help="Color source: accent (theme accent color) or bg (wallpaper average, requires Pillow)"
     )
     parser.add_argument(

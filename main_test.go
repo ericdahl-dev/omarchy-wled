@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -157,7 +158,7 @@ type fixedColorSource struct {
 	sentinel string
 }
 
-func (s *fixedColorSource) Read() ([3]uint8, error)  { return s.color, nil }
+func (s *fixedColorSource) Read() ([3]uint8, error)   { return s.color, nil }
 func (s *fixedColorSource) WatchDir() string          { return "/tmp" }
 func (s *fixedColorSource) IsTrigger(string) bool     { return true }
 func (s *fixedColorSource) Sentinel() (string, error) { return s.sentinel, nil }
@@ -301,6 +302,17 @@ func TestMakeSourceFg(t *testing.T) {
 	}
 }
 
+func TestMakeSourceForegroundAlias(t *testing.T) {
+	src := makeSource("foreground")
+	ts, ok := src.(*ThemeColorSource)
+	if !ok {
+		t.Fatalf("expected *ThemeColorSource, got %T", src)
+	}
+	if ts.key != "foreground" {
+		t.Errorf("expected key=foreground, got %s", ts.key)
+	}
+}
+
 func TestMakeSourceBg(t *testing.T) {
 	src := makeSource("bg")
 	if _, ok := src.(*BgColorSource); !ok {
@@ -315,6 +327,13 @@ func TestThemeSourceIsTriggerOnThemeNameFile(t *testing.T) {
 	}
 }
 
+func TestThemeSourceIsTriggerOnColorsToml(t *testing.T) {
+	src := &ThemeColorSource{key: "accent"}
+	if !src.IsTrigger(colorsToml) {
+		t.Errorf("expected IsTrigger(%s) to be true", colorsToml)
+	}
+}
+
 func TestBgSourceIsTriggerOnBackgroundLink(t *testing.T) {
 	src := &BgColorSource{}
 	if !src.IsTrigger(backgroundLink) {
@@ -322,5 +341,42 @@ func TestBgSourceIsTriggerOnBackgroundLink(t *testing.T) {
 	}
 	if src.IsTrigger("/some/other/path") {
 		t.Error("expected IsTrigger on unrelated path to be false")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// parseArgs / version
+// ---------------------------------------------------------------------------
+
+func TestParseArgsVersionShortFlag(t *testing.T) {
+	opts, err := parseArgs([]string{"-v"}, map[string]string{}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.showVersion {
+		t.Fatal("showVersion: want true")
+	}
+	if opts.wledIP != "" {
+		t.Fatalf("wledIP: want empty when only -v, got %q", opts.wledIP)
+	}
+}
+
+func TestParseArgsVersionLongFlag(t *testing.T) {
+	opts, err := parseArgs([]string{"-version"}, map[string]string{}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.showVersion {
+		t.Fatal("showVersion: want true")
+	}
+}
+
+func TestParseArgsUnknownFlag(t *testing.T) {
+	_, err := parseArgs([]string{"-notreal"}, map[string]string{}, io.Discard)
+	if err == nil {
+		t.Fatal("expected error for unknown flag")
+	}
+	if !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
