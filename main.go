@@ -395,6 +395,22 @@ func watchSource(ip string, brightness int, saturation float64, src ColorSource)
 	}
 }
 
+// pollTick runs one "sentinel changed" check: if the source sentinel moved on,
+// push the new color. Used by poll and by tests (mirrors Python _poll body).
+func pollTick(ip string, brightness int, saturation float64, src ColorSource, st *state, lastSentinel *string) {
+	sentinel, err := src.Sentinel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return
+	}
+	if sentinel == *lastSentinel {
+		return
+	}
+	*lastSentinel = sentinel
+	time.Sleep(200 * time.Millisecond)
+	pushIfChanged(src, st, ip, brightness, saturation)
+}
+
 // poll is a 1-second loop fallback used when fsnotify is unavailable. In the
 // Go version fsnotify is always available (it is a compiled-in dependency),
 // so this path is only reached on platforms where inotify is unsupported.
@@ -402,14 +418,7 @@ func poll(ip string, brightness int, saturation float64, src ColorSource) {
 	st := &state{}
 	var lastSentinel string
 	for {
-		sentinel, err := src.Sentinel()
-		if err == nil && sentinel != lastSentinel {
-			lastSentinel = sentinel
-			time.Sleep(200 * time.Millisecond)
-			pushIfChanged(src, st, ip, brightness, saturation)
-		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		}
+		pollTick(ip, brightness, saturation, src, st, &lastSentinel)
 		time.Sleep(time.Second)
 	}
 }

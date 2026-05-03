@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -64,6 +65,14 @@ func TestReadColorKeyMissingKey(t *testing.T) {
 	}
 }
 
+func TestReadColorKeyMissingForeground(t *testing.T) {
+	p := writeColorsToml(t, "accent = \"#82FB9C\"\n")
+	_, err := readColorKey("foreground", p)
+	if err == nil {
+		t.Fatal("expected error for missing foreground, got nil")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // applySaturation
 // ---------------------------------------------------------------------------
@@ -89,6 +98,31 @@ func TestApplySaturationClampsAboveOne(t *testing.T) {
 		if c > 255 {
 			t.Errorf("channel %d out of range: %d", i, c)
 		}
+	}
+}
+
+// relativeSaturation is the HSV "S" component (0..1) for sRGB rgb, matching
+// the max-based definition used inside applySaturation.
+func relativeSaturation(rgb [3]uint8) float64 {
+	r := float64(rgb[0]) / 255
+	g := float64(rgb[1]) / 255
+	b := float64(rgb[2]) / 255
+	maxC := math.Max(r, math.Max(g, b))
+	minC := math.Min(r, math.Min(g, b))
+	if maxC == 0 {
+		return 0
+	}
+	return (maxC - minC) / maxC
+}
+
+func TestApplySaturationBoostIncreasesVividness(t *testing.T) {
+	c := [3]uint8{150, 180, 160}
+	one := applySaturation(c, 1.0)
+	two := applySaturation(c, 2.0)
+	s1 := relativeSaturation(one)
+	s2 := relativeSaturation(two)
+	if s2 < s1 {
+		t.Errorf("boost should not lower saturation: s1=%.4f s2=%.4f", s1, s2)
 	}
 }
 
@@ -233,6 +267,31 @@ func TestPushIfChangedAppliesSaturation(t *testing.T) {
 	}
 }
 
+// Parity with Python test_poll_uses_provided_state_dict: if state already holds
+// the current color, pollTick must not hit the network when sentinel advances.
+func TestPollTickSkipsSendWhenStateMatchesRead(t *testing.T) {
+	var sent int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sent++
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	orig := wledURLOverride
+	wledURLOverride = srv.URL + "/json/state"
+	t.Cleanup(func() { wledURLOverride = orig })
+
+	c := [3]uint8{100, 150, 200}
+	st := &state{}
+	st.lastColor = &c
+	src := &fixedColorSource{color: c, sentinel: "s1"}
+	var last string
+	pollTick("ignored", 255, 1.0, src, st, &last)
+	if sent != 0 {
+		t.Errorf("want 0 HTTP sends when last_color matches read(), got %d", sent)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // readBgColor
 // ---------------------------------------------------------------------------
@@ -273,6 +332,36 @@ func TestReadBgColorAveragesLinear(t *testing.T) {
 	}
 	if got[2] < 170 || got[2] > 190 {
 		t.Errorf("expected blue≈180 (linear avg), got %d", got[2])
+	}
+}
+
+// Like test_omarchy_wled.test_read_bg_color_linear_avg_brighter_than_naive on main:
+// half red / half black — linear-spot average should be well above naive 127.
+func TestReadBgColorStripLinearAvgBrighterThanNaive(t *testing.T) {
+	dir := t.TempDir()
+	img := image.NewRGBA(image.Rect(0, 0, 2, 1))
+	img.Set(0, 0, color.RGBA{R: 255, A: 255})
+	img.Set(1, 0, color.RGBA{A: 255})
+	imgPath := filepath.Join(dir, "bg.png")
+	f, err := os.Create(imgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	f.Close()
+	link := filepath.Join(dir, "background")
+	if err := os.Symlink(imgPath, link); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readBgColor(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0] <= 150 {
+		t.Errorf("expected linear avg red > 150 (naive sRGB would be ~127), got %d", got[0])
 	}
 }
 
