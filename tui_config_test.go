@@ -47,6 +47,24 @@ func TestTuiConfigValidation(t *testing.T) {
 	if err := (&tuiConfig{IP: "1", Source: "bogus", Brightness: 255, Saturation: 1.0}).Validate(); err == nil {
 		t.Error("bad source")
 	}
+	if err := (&tuiConfig{IP: "1", Source: "accent", Brightness: 255, Saturation: 1.0, Gradient: true}).Validate(); err == nil {
+		t.Error("gradient without bg")
+	}
+}
+
+func TestTuiConfigGradientRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	cfg := &tuiConfig{IP: "10.0.0.2", Source: "bg", Brightness: 200, Saturation: 1.1, Gradient: true, GradientLEDs: 0}
+	if err := saveTuiConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadTuiConfig(path)
+	if err != nil || got == nil {
+		t.Fatalf("load: %v %+v", err, got)
+	}
+	if !got.Gradient || got.Source != "bg" || got.GradientLEDs != 0 || got.Brightness != 200 {
+		t.Fatalf("got %+v", got)
+	}
 }
 
 func TestNormalizeSourceRoundTrip(t *testing.T) {

@@ -45,6 +45,7 @@ type tuiFocus int
 const (
 	focusIP tuiFocus = iota
 	focusSource
+	focusGradient // wallpaper spatial strip (only when source = Wallpaper)
 	focusBrightness
 	focusSaturation
 	focusService
@@ -83,20 +84,26 @@ type previewTickMsg struct{ gen int }
 type serviceActiveMsg struct{ active bool }
 
 type tuiModel struct {
-	screen   tuiScreen
-	width    int
-	setupTI  textinput.Model
-	mainTI   textinput.Model
-	focus    tuiFocus
-	sourceIx int
+	screen    tuiScreen
+	width     int
+	setupTI   textinput.Model
+	mainTI    textinput.Model
+	focus     tuiFocus
+	sourceIx  int
 	brightPct int // 0–100 step 2
 	satPct    int // 0–200 step 2 → saturation = satPct/100
 
 	cfg        tuiConfig
 	serviceOn  bool
-	previewRGB [3]uint8
-	previewErr string  // WLED / read errors (cleared on successful preview)
-	toast      string  // save / service messages
+	gradientOn bool // wallpaper-only; persisted as cfg.Gradient when source is bg
+
+	previewTracker    *pushTracker
+	previewRGB        [3]uint8
+	previewRGBEnd     [3]uint8
+	previewIsGradient bool
+
+	previewErr string // WLED / read errors (cleared on successful preview)
+	toast      string // save / service messages
 	toastErr   bool
 
 	previewGen int
@@ -123,15 +130,18 @@ func newTuiModel(initial *tuiConfig) *tuiModel {
 	mt.CharLimit = 255
 	mt.Focus()
 
+	grad := initial.Gradient && sourceIdxFromName(initial.Source) == 2
 	m := &tuiModel{
-		screen:    tuiScreenMain,
-		mainTI:    mt,
-		focus:     focusIP,
-		sourceIx:  sourceIdxFromName(initial.Source),
-		brightPct: brightness255ToPct(initial.Brightness),
-		satPct:    int(initial.Saturation * 100),
-		cfg:       *initial,
-		width:     80,
+		screen:         tuiScreenMain,
+		mainTI:         mt,
+		focus:          focusIP,
+		sourceIx:       sourceIdxFromName(initial.Source),
+		brightPct:      brightness255ToPct(initial.Brightness),
+		satPct:         int(initial.Saturation * 100),
+		cfg:            *initial,
+		gradientOn:     grad,
+		previewTracker: &pushTracker{},
+		width:          80,
 	}
 	if m.satPct > 200 {
 		m.satPct = 200
@@ -224,6 +234,7 @@ func (m *tuiModel) updateSetupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.errSetup = ""
 		m.cfg = tuiConfig{
 			IP: ip, Source: tuiDefaultSource, Brightness: tuiDefaultBrightness, Saturation: tuiDefaultSaturation,
+			Gradient: false, GradientLEDs: 0,
 		}
 		if err := saveTuiConfig(configPath, &m.cfg); err != nil {
 			m.errSetup = err.Error()
@@ -237,8 +248,10 @@ func (m *tuiModel) updateSetupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = tuiScreenMain
 		m.focus = focusIP
 		m.sourceIx = 0
+		m.gradientOn = false
 		m.brightPct = 100
 		m.satPct = int(tuiDefaultSaturation * 100)
+		m.previewTracker = &pushTracker{}
 		return m, tea.Batch(
 			textinput.Blink,
 			func() tea.Msg {
@@ -287,12 +300,28 @@ func (m *tuiModel) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.sourceIx < 0 {
 				m.sourceIx = sourceMaxIdx
 			}
+			if m.sourceIx != 2 {
+				m.gradientOn = false
+			}
+			m.resetPreviewTracker()
+			m.ensureValidFocus()
 			return m, m.schedulePreview()
 		case "right", "l":
 			m.sourceIx++
 			if m.sourceIx > sourceMaxIdx {
 				m.sourceIx = 0
 			}
+			if m.sourceIx != 2 {
+				m.gradientOn = false
+			}
+			m.resetPreviewTracker()
+			m.ensureValidFocus()
+			return m, m.schedulePreview()
+		}
+	case focusGradient:
+		if k == " " {
+			m.gradientOn = !m.gradientOn
+			m.resetPreviewTracker()
 			return m, m.schedulePreview()
 		}
 	case focusBrightness:
@@ -342,27 +371,49 @@ func (m *tuiModel) syncFocus() tea.Cmd {
 	return nil
 }
 
+func (m *tuiModel) focusSequence() []tuiFocus {
+	seq := []tuiFocus{focusIP, focusSource}
+	if m.sourceIx == 2 {
+		seq = append(seq, focusGradient)
+	}
+	seq = append(seq, focusBrightness, focusSaturation, focusService, focusSave, focusQuit)
+	return seq
+}
+
 func (m *tuiModel) cycleFocus(dir int) {
-	// 0..6
-	n := int(m.focus)
-	n += dir
-	if n < 0 {
-		n = 6
+	seq := m.focusSequence()
+	idx := 0
+	for i, f := range seq {
+		if f == m.focus {
+			idx = i
+			break
+		}
 	}
-	if n > 6 {
-		n = 0
+	idx = (idx + dir + len(seq)) % len(seq)
+	m.focus = seq[idx]
+}
+
+func (m *tuiModel) ensureValidFocus() {
+	if m.focus == focusGradient && m.sourceIx != 2 {
+		m.focus = focusSource
 	}
-	m.focus = tuiFocus(n)
 }
 
 func (m *tuiModel) currentConfigFromForm() tuiConfig {
 	ip := strings.TrimSpace(m.mainTI.Value())
+	grad := m.gradientOn && m.sourceIx == 2
 	return tuiConfig{
-		IP:         ip,
-		Source:     sourceIdxToName(m.sourceIx),
-		Brightness: brightnessPctTo255(m.brightPct),
-		Saturation: float64(m.satPct) / 100.0,
+		IP:           ip,
+		Source:       sourceIdxToName(m.sourceIx),
+		Brightness:   brightnessPctTo255(m.brightPct),
+		Saturation:   float64(m.satPct) / 100.0,
+		Gradient:     grad,
+		GradientLEDs: m.cfg.GradientLEDs,
 	}
+}
+
+func (m *tuiModel) resetPreviewTracker() {
+	m.previewTracker = &pushTracker{}
 }
 
 func (m *tuiModel) schedulePreview() tea.Cmd {
@@ -380,16 +431,35 @@ func (m *tuiModel) runPreview() (tea.Model, tea.Cmd) {
 		m.previewErr = err.Error()
 		return m, nil
 	}
-	if err := previewSolidToWLED(cfg.IP, cfg.Source, cfg.Brightness, cfg.Saturation); err != nil {
+	if err := previewPushTUI(&cfg, m.previewTracker); err != nil {
 		m.previewErr = err.Error()
 		return m, nil
 	}
 	m.previewErr = ""
+	m.updatePreviewSwatches(&cfg)
+	return m, nil
+}
+
+func (m *tuiModel) updatePreviewSwatches(cfg *tuiConfig) {
+	if cfg.Gradient && normalizeSource(cfg.Source) == "bg" {
+		n, err := resolveGradientLEDCount(cfg.IP, cfg.GradientLEDs)
+		if err != nil {
+			return
+		}
+		strip, err := wallpaperColumnAverageRowColorsForLEDs(wallpaperSymlink(), n)
+		if err != nil || len(strip) == 0 {
+			return
+		}
+		m.previewRGB = applySaturation(strip[0], cfg.Saturation)
+		m.previewRGBEnd = applySaturation(strip[len(strip)-1], cfg.Saturation)
+		m.previewIsGradient = true
+		return
+	}
+	m.previewIsGradient = false
 	src := makeSource(normalizeSource(cfg.Source))
 	if rgb, err := src.Read(); err == nil {
 		m.previewRGB = applySaturation(rgb, cfg.Saturation)
 	}
-	return m, nil
 }
 
 func (m *tuiModel) setToast(msg string, isErr bool) {
@@ -485,6 +555,13 @@ func (m *tuiModel) View() string {
 	b.WriteString(lipgloss.NewStyle().Foreground(accent).Bold(true).Render("Configuration") + "\n")
 	b.WriteString(m.renderLabeled("WLED IP / Host", m.mainTI.View(), m.focus == focusIP) + "\n")
 	b.WriteString(m.renderLabeled("Color source", m.renderSourceRow(), m.focus == focusSource) + "\n")
+	if m.sourceIx == 2 {
+		glabel := "Off"
+		if m.gradientOn {
+			glabel = "On (left→right strip)"
+		}
+		b.WriteString(m.renderLabeled("Wallpaper gradient", glabel+" (Space)", m.focus == focusGradient) + "\n")
+	}
 	b.WriteString(m.renderLabeled(fmt.Sprintf("Brightness: %d%%", m.brightPct), m.renderBar(m.brightPct, 100), m.focus == focusBrightness) + "\n")
 	b.WriteString(m.renderLabeled(fmt.Sprintf("Saturation: %.2f×", float64(m.satPct)/100.0), m.renderBar(m.satPct, 200), m.focus == focusSaturation) + "\n\n")
 
@@ -495,11 +572,24 @@ func (m *tuiModel) View() string {
 	}
 	b.WriteString(m.renderLabeled("Auto-start", svcLabel+" (←/→ or Space when focused)", m.focus == focusService) + "\n\n")
 
-	r, g, c := m.previewRGB[0], m.previewRGB[1], m.previewRGB[2]
-	hex := fmt.Sprintf("#%02x%02x%02x", r, g, c)
-	swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(hex)).Bold(true)
 	b.WriteString(lipgloss.NewStyle().Foreground(accent).Bold(true).Render("Current color") + "\n")
-	b.WriteString(swatch.Render(fmt.Sprintf("  rgb(%d, %d, %d)  %s", r, g, c, hex)) + "\n\n")
+	if m.previewIsGradient {
+		r0, g0, b0 := m.previewRGB[0], m.previewRGB[1], m.previewRGB[2]
+		r1, g1, b1 := m.previewRGBEnd[0], m.previewRGBEnd[1], m.previewRGBEnd[2]
+		h0 := fmt.Sprintf("#%02x%02x%02x", r0, g0, b0)
+		h1 := fmt.Sprintf("#%02x%02x%02x", r1, g1, b1)
+		s0 := lipgloss.NewStyle().Foreground(lipgloss.Color(h0)).Bold(true)
+		s1 := lipgloss.NewStyle().Foreground(lipgloss.Color(h1)).Bold(true)
+		line := s0.Render(fmt.Sprintf("rgb(%d,%d,%d) %s", r0, g0, b0, h0)) +
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#888")).Render(" → ") +
+			s1.Render(fmt.Sprintf("rgb(%d,%d,%d) %s", r1, g1, b1, h1))
+		b.WriteString("  " + line + "\n\n")
+	} else {
+		r, g, c := m.previewRGB[0], m.previewRGB[1], m.previewRGB[2]
+		hex := fmt.Sprintf("#%02x%02x%02x", r, g, c)
+		swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(hex)).Bold(true)
+		b.WriteString(swatch.Render(fmt.Sprintf("  rgb(%d, %d, %d)  %s", r, g, c, hex)) + "\n\n")
+	}
 
 	saveBtn := "[ Save ]"
 	quitBtn := "[ Quit ]"

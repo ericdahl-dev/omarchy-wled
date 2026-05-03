@@ -11,10 +11,12 @@ import (
 
 // tuiConfig matches ~/.config/omarchy-wled/config.toml fields used by the TUI.
 type tuiConfig struct {
-	IP         string
-	Source     string
-	Brightness int
-	Saturation float64
+	IP           string
+	Source       string
+	Brightness   int
+	Saturation   float64
+	Gradient     bool // wallpaper column strip (requires source bg)
+	GradientLEDs int  // 0 = fetch LED count from WLED /json/info
 }
 
 const (
@@ -47,6 +49,12 @@ func (c *tuiConfig) Validate() error {
 	}
 	if c.Saturation < 0 {
 		return fmt.Errorf("saturation must be >= 0 — got %g", c.Saturation)
+	}
+	if c.Gradient && normalizeSource(c.Source) != "bg" {
+		return fmt.Errorf("gradient requires wallpaper (bg) source")
+	}
+	if c.GradientLEDs < 0 {
+		return fmt.Errorf("gradient_leds must be >= 0 — got %d", c.GradientLEDs)
 	}
 	return nil
 }
@@ -104,11 +112,27 @@ func loadTuiConfig(path string) (*tuiConfig, error) {
 			sat = f
 		}
 	}
+	grad := false
+	if v, ok := m["gradient"]; ok && parseTomlBool(v) {
+		grad = true
+	}
+	gradLEDs := 0
+	if v, ok := m["gradient_leds"]; ok {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			gradLEDs = n
+		}
+	}
+	nsrc := normalizeSource(src)
+	if nsrc != "bg" {
+		grad = false
+	}
 	return &tuiConfig{
-		IP:         ip,
-		Source:     normalizeSource(src),
-		Brightness: bri,
-		Saturation: sat,
+		IP:           ip,
+		Source:       nsrc,
+		Brightness:   bri,
+		Saturation:   sat,
+		Gradient:     grad,
+		GradientLEDs: gradLEDs,
 	}, nil
 }
 
@@ -128,18 +152,62 @@ func saveTuiConfig(path string, c *tuiConfig) error {
 		return err
 	}
 	src := normalizeSource(c.Source)
+	grad := c.Gradient && src == "bg"
 	content := fmt.Sprintf(
 		`ip = "%s"
 source = "%s"
 brightness = %d
 saturation = %g
+gradient = %t
+gradient_leds = %d
 `,
-		c.IP, src, c.Brightness, c.Saturation,
+		c.IP, src, c.Brightness, c.Saturation, grad, c.GradientLEDs,
 	)
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
-// previewSolidToWLED reads the color source and pushes a solid color (TUI live preview).
+// previewPushTUI sends live preview to WLED (solid or wallpaper gradient), using the same
+// dedupe rules as the daemon.
+func previewPushTUI(cfg *tuiConfig, tracker *pushTracker) error {
+	src := makeSource(normalizeSource(cfg.Source))
+	opts := pushOpts{
+		bgGradient:   cfg.Gradient && normalizeSource(cfg.Source) == "bg",
+		gradientLEDs: cfg.GradientLEDs,
+	}
+	if opts.bgGradient {
+		if _, ok := src.(*BgColorSource); !ok {
+			return fmt.Errorf("gradient requires wallpaper source")
+		}
+		n, err := resolveGradientLEDCount(cfg.IP, opts.gradientLEDs)
+		if err != nil {
+			return err
+		}
+		stripRGB, err := wallpaperColumnAverageRowColorsForLEDs(wallpaperSymlink(), n)
+		if err != nil {
+			return err
+		}
+		for i := range stripRGB {
+			stripRGB[i] = applySaturation(stripRGB[i], cfg.Saturation)
+		}
+		if !tracker.shouldSendGradient(stripRGB) {
+			return nil
+		}
+		tracker.markGradient(stripRGB)
+		return sendSpatialGradientToWLED(cfg.IP, stripRGB, cfg.Brightness)
+	}
+	rgb, err := src.Read()
+	if err != nil {
+		return err
+	}
+	rgb = applySaturation(rgb, cfg.Saturation)
+	if !tracker.shouldSendSolid(rgb) {
+		return nil
+	}
+	tracker.markSolid(rgb)
+	return sendColorToWLED(cfg.IP, rgb, cfg.Brightness)
+}
+
+// previewSolidToWLED reads the color source and pushes a solid color (tests).
 func previewSolidToWLED(ip, sourceName string, brightness255 int, saturation float64) error {
 	src := makeSource(normalizeSource(sourceName))
 	rgb, err := src.Read()
