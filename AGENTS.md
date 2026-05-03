@@ -42,7 +42,11 @@ All architectural issues from the initial audit have been resolved. No known ope
 
 | File | Purpose |
 |---|---|
-| `omarchy_wled.py` | Core logic |
+| `main.go` | Go CLI: Color Source, push/watch/poll, config |
+| `wallpaper.go` | Go: wallpaper decode, γ pipeline, column→LED strip |
+| `wled.go` | Go: WLED HTTP (solid, spatial `seg.i`, LED count) |
+| `main_test.go` | Go test suite |
+| `omarchy_wled.py` | Python core (TUI / optional pip install) |
 | `omarchy_wled_tui.py` | Textual TUI (`omarchy-wled-tui` entry point) |
 | `test_omarchy_wled.py` | pytest suite (core) |
 | `test_omarchy_wled_tui.py` | pytest suite (TUI) |
@@ -50,7 +54,7 @@ All architectural issues from the initial audit have been resolved. No known ope
 | `pyproject.toml` | Python package metadata |
 | `omarchy-wled@.service` | systemd user service template |
 | `.github/workflows/aur-release.yml` | AUR release automation |
-| `.github/workflows/ci.yml` | pytest on push/PR |
+| `.github/workflows/ci.yml` | `go test` + pytest on push/PR |
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker

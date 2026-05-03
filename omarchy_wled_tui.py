@@ -25,8 +25,8 @@ class TuiConfig:
     def validate(self) -> None:
         if not self.ip:
             raise ValueError("ip must not be empty")
-        if self.source not in ("accent", "fg", "bg"):
-            raise ValueError(f"source must be accent, fg, or bg — got {self.source!r}")
+        if self.source not in ("accent", "fg", "foreground", "bg"):
+            raise ValueError(f"source must be accent, fg, foreground, or bg — got {self.source!r}")
         if not (0 <= self.brightness <= 255):
             raise ValueError(f"brightness must be 0-255 — got {self.brightness}")
         if self.saturation < 0:
