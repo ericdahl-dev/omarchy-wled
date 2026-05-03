@@ -359,6 +359,8 @@ var wledURLOverride string
 const maxGradientLEDChunk = 256
 
 // sendColorToWLED pushes a solid color to a WLED device via its JSON API.
+// After -gradient (seg.i individual LED control), WLED keeps the segment frozen until
+// effect + colors are set again; fx=Solid and frz=false restore normal solid fill.
 func sendColorToWLED(ip string, rgb [3]uint8, brightness int) error {
 	url := wledURLOverride
 	if url == "" {
@@ -368,7 +370,11 @@ func sendColorToWLED(ip string, rgb [3]uint8, brightness int) error {
 		"on":  true,
 		"bri": max(0, min(255, brightness)),
 		"seg": []map[string]any{
-			{"col": [][]int{{int(rgb[0]), int(rgb[1]), int(rgb[2])}}},
+			{
+				"fx":  0,
+				"frz": false,
+				"col": [][]int{{int(rgb[0]), int(rgb[1]), int(rgb[2])}},
+			},
 		},
 	})
 	if err != nil {

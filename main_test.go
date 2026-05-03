@@ -162,7 +162,14 @@ func TestSendColorToWLEDPostsCorrectPayload(t *testing.T) {
 		t.Errorf("expected bri=200, got %v", payload["bri"])
 	}
 	segs := payload["seg"].([]any)
-	col := segs[0].(map[string]any)["col"].([]any)[0].([]any)
+	seg0 := segs[0].(map[string]any)
+	if int(seg0["fx"].(float64)) != 0 {
+		t.Errorf("expected fx=0 (Solid), got %v", seg0["fx"])
+	}
+	if frz, ok := seg0["frz"].(bool); !ok || frz {
+		t.Errorf("expected frz=false, got %v", seg0["frz"])
+	}
+	col := seg0["col"].([]any)[0].([]any)
 	want := []int{130, 251, 156}
 	for i, v := range want {
 		if int(col[i].(float64)) != v {
