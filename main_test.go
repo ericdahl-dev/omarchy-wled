@@ -209,9 +209,9 @@ func TestPushIfChangedSendsOnFirstCall(t *testing.T) {
 	wledURLOverride = srv.URL + "/json/state"
 	t.Cleanup(func() { wledURLOverride = orig })
 
-	st := &state{}
+	tracker := &pushTracker{}
 	src := &fixedColorSource{color: [3]uint8{100, 150, 200}}
-	pushIfChanged(src, st, "ignored", 255, 1.0)
+	pushIfChanged(src, tracker, "ignored", 255, 1.0)
 	if sent != 1 {
 		t.Errorf("expected 1 send, got %d", sent)
 	}
@@ -229,10 +229,10 @@ func TestPushIfChangedDoesNotResendSameColor(t *testing.T) {
 	wledURLOverride = srv.URL + "/json/state"
 	t.Cleanup(func() { wledURLOverride = orig })
 
-	st := &state{}
+	tracker := &pushTracker{}
 	src := &fixedColorSource{color: [3]uint8{100, 150, 200}}
-	pushIfChanged(src, st, "ignored", 255, 1.0)
-	pushIfChanged(src, st, "ignored", 255, 1.0)
+	pushIfChanged(src, tracker, "ignored", 255, 1.0)
+	pushIfChanged(src, tracker, "ignored", 255, 1.0)
 	if sent != 1 {
 		t.Errorf("expected 1 send (deduplicated), got %d", sent)
 	}
@@ -250,9 +250,9 @@ func TestPushIfChangedAppliesSaturation(t *testing.T) {
 	wledURLOverride = srv.URL + "/json/state"
 	t.Cleanup(func() { wledURLOverride = orig })
 
-	st := &state{}
+	tracker := &pushTracker{}
 	// saturation=0 should make r==g==b
-	pushIfChanged(&fixedColorSource{color: [3]uint8{100, 200, 150}}, st, "ignored", 255, 0.0)
+	pushIfChanged(&fixedColorSource{color: [3]uint8{100, 200, 150}}, tracker, "ignored", 255, 0.0)
 
 	var payload map[string]any
 	if err := json.Unmarshal(captured, &payload); err != nil {
@@ -267,8 +267,8 @@ func TestPushIfChangedAppliesSaturation(t *testing.T) {
 	}
 }
 
-// Parity with Python test_poll_uses_provided_state_dict: if state already holds
-// the current color, pollTick must not hit the network when sentinel advances.
+// Parity with Python test_poll_uses_provided_state_dict: if we already sent this RGB,
+// pollTick must not POST again when the sentinel string updates.
 func TestPollTickSkipsSendWhenStateMatchesRead(t *testing.T) {
 	var sent int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -282,11 +282,11 @@ func TestPollTickSkipsSendWhenStateMatchesRead(t *testing.T) {
 	t.Cleanup(func() { wledURLOverride = orig })
 
 	c := [3]uint8{100, 150, 200}
-	st := &state{}
-	st.lastColor = &c
+	tracker := &pushTracker{}
+	tracker.lastSentRGB = &c
 	src := &fixedColorSource{color: c, sentinel: "s1"}
 	var last string
-	pollTick("ignored", 255, 1.0, src, st, &last)
+	pollTick("ignored", 255, 1.0, src, tracker, &last)
 	if sent != 0 {
 		t.Errorf("want 0 HTTP sends when last_color matches read(), got %d", sent)
 	}
@@ -375,8 +375,8 @@ func TestMakeSourceAccent(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *ThemeColorSource, got %T", src)
 	}
-	if ts.key != "accent" {
-		t.Errorf("expected key=accent, got %s", ts.key)
+	if ts.tomlColorKey != "accent" {
+		t.Errorf("expected tomlColorKey=accent, got %s", ts.tomlColorKey)
 	}
 }
 
@@ -386,8 +386,8 @@ func TestMakeSourceFg(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *ThemeColorSource, got %T", src)
 	}
-	if ts.key != "foreground" {
-		t.Errorf("expected key=foreground, got %s", ts.key)
+	if ts.tomlColorKey != "foreground" {
+		t.Errorf("expected tomlColorKey=foreground, got %s", ts.tomlColorKey)
 	}
 }
 
@@ -397,8 +397,8 @@ func TestMakeSourceForegroundAlias(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *ThemeColorSource, got %T", src)
 	}
-	if ts.key != "foreground" {
-		t.Errorf("expected key=foreground, got %s", ts.key)
+	if ts.tomlColorKey != "foreground" {
+		t.Errorf("expected tomlColorKey=foreground, got %s", ts.tomlColorKey)
 	}
 }
 
@@ -410,14 +410,14 @@ func TestMakeSourceBg(t *testing.T) {
 }
 
 func TestThemeSourceIsTriggerOnThemeNameFile(t *testing.T) {
-	src := &ThemeColorSource{key: "accent"}
+	src := &ThemeColorSource{tomlColorKey: "accent"}
 	if !src.IsTrigger(themeNameFile) {
 		t.Errorf("expected IsTrigger(%s) to be true", themeNameFile)
 	}
 }
 
 func TestThemeSourceIsTriggerOnColorsToml(t *testing.T) {
-	src := &ThemeColorSource{key: "accent"}
+	src := &ThemeColorSource{tomlColorKey: "accent"}
 	if !src.IsTrigger(colorsToml) {
 		t.Errorf("expected IsTrigger(%s) to be true", colorsToml)
 	}

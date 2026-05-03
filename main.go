@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	xdraw "golang.org/x/image/draw"
+	xdraw "golang.org/x/image/draw" // High-quality resampling (e.g. Catmull-Rom) for wallpaper 1×1 average.
 )
 
 // version is set at link time: go build -ldflags "-X main.version=v1.2.3"
@@ -45,16 +45,17 @@ var (
 // Color reading
 // ---------------------------------------------------------------------------
 
-var hexLineRe = regexp.MustCompile(`(?m)^(\w+)\s*=\s*"#([0-9a-fA-F]{6})"`)
+// colorsTomlKeyHexPattern matches lines like: accent = "#82FB9C"
+var colorsTomlKeyHexPattern = regexp.MustCompile(`(?m)^(\w+)\s*=\s*"#([0-9a-fA-F]{6})"`)
 
-// readColorKey extracts a named hex color from a colors.toml file.
-func readColorKey(key, path string) ([3]uint8, error) {
-	data, err := os.ReadFile(path)
+// readColorKey reads one named sRGB color from an Omarchy colors.toml file.
+func readColorKey(tomlKey, filePath string) ([3]uint8, error) {
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return [3]uint8{}, err
 	}
-	for _, m := range hexLineRe.FindAllStringSubmatch(string(data), -1) {
-		if m[1] == key {
+	for _, m := range colorsTomlKeyHexPattern.FindAllStringSubmatch(string(data), -1) {
+		if m[1] == tomlKey {
 			hex := m[2]
 			r, _ := strconv.ParseUint(hex[0:2], 16, 8)
 			g, _ := strconv.ParseUint(hex[2:4], 16, 8)
@@ -62,63 +63,69 @@ func readColorKey(key, path string) ([3]uint8, error) {
 			return [3]uint8{uint8(r), uint8(g), uint8(b)}, nil
 		}
 	}
-	return [3]uint8{}, fmt.Errorf("%s color not found in %s", key, path)
+	return [3]uint8{}, fmt.Errorf("%s color not found in %s", tomlKey, filePath)
 }
 
-// bgLUT* match omarchy_wled.read_bg_color: PIL point() LUT then resize(1,1)
-// with high-quality filter — same idea as Python pre-map + downscale (fast vs full Pow per pixel).
-var bgLUTLinearFromSRGB, bgLUTSRGBFromLinear [256]uint8
+// wallpaperSrgbToLinearByte and wallpaperLinearToSrgbByte implement the same γ=2.2
+// pipeline as Python omarchy_wled.read_bg_color (PIL .point() LUTs). Values stay in 0–255.
+var wallpaperSrgbToLinearByte, wallpaperLinearToSrgbByte [256]uint8
 
 func init() {
-	for v := 0; v < 256; v++ {
-		bgLUTLinearFromSRGB[v] = uint8(math.Round(math.Pow(float64(v)/255.0, 2.2) * 255.0))
-		bgLUTSRGBFromLinear[v] = uint8(math.Round(math.Pow(float64(v)/255.0, 1.0/2.2) * 255.0))
+	initWallpaperGammaLookupTables()
+}
+
+func initWallpaperGammaLookupTables() {
+	for channel := 0; channel < 256; channel++ {
+		v := float64(channel)
+		wallpaperSrgbToLinearByte[channel] = uint8(math.Round(math.Pow(v/255.0, 2.2) * 255.0))
+		wallpaperLinearToSrgbByte[channel] = uint8(math.Round(math.Pow(v/255.0, 1.0/2.2) * 255.0))
 	}
 }
 
-// readBgColor computes the perceptual average like the Python implementation:
-// sRGB→linear LUT per channel, Catmull-Rom scale to 1×1 (same role as PIL LANCZOS),
-// then linear→sRGB LUT — O(n) LUT pass + one resize instead of per-pixel Pow + sum.
-func readBgColor(linkPath string) ([3]uint8, error) {
-	imgPath, err := filepath.EvalSymlinks(linkPath)
+// readBgColor returns the wallpaper “average” color in true display space.
+// Steps: decode → γ-decode each channel via LUT → high-quality downscale to 1×1
+// (weighted average, same role as PIL LANCZOS) → γ-encode back to sRGB bytes.
+func readBgColor(wallpaperSymlinkPath string) ([3]uint8, error) {
+	resolvedImagePath, err := filepath.EvalSymlinks(wallpaperSymlinkPath)
 	if err != nil {
 		return [3]uint8{}, fmt.Errorf("cannot resolve wallpaper symlink: %w", err)
 	}
 
-	f, err := os.Open(imgPath)
+	file, err := os.Open(resolvedImagePath)
 	if err != nil {
 		return [3]uint8{}, err
 	}
-	defer f.Close()
+	defer file.Close()
 
-	img, _, err := image.Decode(f)
+	decoded, _, err := image.Decode(file)
 	if err != nil {
-		return [3]uint8{}, fmt.Errorf("cannot decode image %s: %w", imgPath, err)
+		return [3]uint8{}, fmt.Errorf("cannot decode image %s: %w", resolvedImagePath, err)
 	}
 
-	bounds := img.Bounds()
+	bounds := decoded.Bounds()
 	if bounds.Dx()*bounds.Dy() == 0 {
 		return [3]uint8{}, fmt.Errorf("empty image")
 	}
 
-	rgba := image.NewRGBA(bounds)
-	draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
+	rgbaWorking := image.NewRGBA(bounds)
+	draw.Draw(rgbaWorking, bounds, decoded, bounds.Min, draw.Src)
 
-	pix := rgba.Pix
-	for i := 0; i < len(pix); i += 4 {
-		pix[i+0] = bgLUTLinearFromSRGB[pix[i+0]]
-		pix[i+1] = bgLUTLinearFromSRGB[pix[i+1]]
-		pix[i+2] = bgLUTLinearFromSRGB[pix[i+2]]
+	// Each RGB channel: sRGB byte → linear-light proxy byte (still one byte per channel).
+	pixels := rgbaWorking.Pix
+	for i := 0; i < len(pixels); i += 4 {
+		pixels[i+0] = wallpaperSrgbToLinearByte[pixels[i+0]]
+		pixels[i+1] = wallpaperSrgbToLinearByte[pixels[i+1]]
+		pixels[i+2] = wallpaperSrgbToLinearByte[pixels[i+2]]
 	}
 
-	out := image.NewRGBA(image.Rect(0, 0, 1, 1))
-	xdraw.CatmullRom.Scale(out, out.Bounds(), rgba, bounds, draw.Src, nil)
+	onePixel := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	xdraw.CatmullRom.Scale(onePixel, onePixel.Bounds(), rgbaWorking, bounds, draw.Src, nil)
 
-	c := out.RGBAAt(0, 0)
+	linearAverage := onePixel.RGBAAt(0, 0)
 	return [3]uint8{
-		bgLUTSRGBFromLinear[c.R],
-		bgLUTSRGBFromLinear[c.G],
-		bgLUTSRGBFromLinear[c.B],
+		wallpaperLinearToSrgbByte[linearAverage.R],
+		wallpaperLinearToSrgbByte[linearAverage.G],
+		wallpaperLinearToSrgbByte[linearAverage.B],
 	}, nil
 }
 
@@ -126,41 +133,41 @@ func readBgColor(linkPath string) ([3]uint8, error) {
 // Color transformation
 // ---------------------------------------------------------------------------
 
-// applySaturation scales the HSV saturation of an RGB color.
-// 1.0 = unchanged, 0.0 = greyscale, >1.0 = boost (clamped to [0, 1]).
-func applySaturation(rgb [3]uint8, scale float64) [3]uint8 {
-	r := float64(rgb[0]) / 255
-	g := float64(rgb[1]) / 255
-	b := float64(rgb[2]) / 255
+// applySaturation scales the HSV saturation of an sRGB color.
+// saturationMultiplier 1.0 = unchanged, 0.0 = grey, >1.0 = more vivid (S clamped to 1).
+func applySaturation(rgb [3]uint8, saturationMultiplier float64) [3]uint8 {
+	rN := float64(rgb[0]) / 255
+	gN := float64(rgb[1]) / 255
+	bN := float64(rgb[2]) / 255
 
-	maxC := math.Max(r, math.Max(g, b))
-	minC := math.Min(r, math.Min(g, b))
-	delta := maxC - minC
+	maxChannel := math.Max(rN, math.Max(gN, bN))
+	minChannel := math.Min(rN, math.Min(gN, bN))
+	chroma := maxChannel - minChannel
 
-	v := maxC
-	s := 0.0
-	if maxC > 0 {
-		s = delta / maxC
+	value := maxChannel
+	saturation := 0.0
+	if maxChannel > 0 {
+		saturation = chroma / maxChannel
 	}
 
-	h := 0.0
-	if delta > 0 {
-		switch maxC {
-		case r:
-			h = (g - b) / delta
-			if g < b {
-				h += 6
+	hue := 0.0
+	if chroma > 0 {
+		switch maxChannel {
+		case rN:
+			hue = (gN - bN) / chroma
+			if gN < bN {
+				hue += 6
 			}
-		case g:
-			h = (b-r)/delta + 2
+		case gN:
+			hue = (bN-rN)/chroma + 2
 		default:
-			h = (r-g)/delta + 4
+			hue = (rN-gN)/chroma + 4
 		}
-		h /= 6
+		hue /= 6
 	}
 
-	s = math.Max(0, math.Min(1, s*scale))
-	return hsvToRGB(h, s, v)
+	saturation = math.Max(0, math.Min(1, saturation*saturationMultiplier))
+	return hsvToRGB(hue, saturation, value)
 }
 
 func hsvToRGB(h, s, v float64) [3]uint8 {
@@ -256,38 +263,38 @@ type ColorSource interface {
 
 // ThemeColorSource reads a named color key (accent, foreground, …) from
 // the Omarchy theme's colors.toml.
-type ThemeColorSource struct{ key string }
+type ThemeColorSource struct{ tomlColorKey string }
 
 func (s *ThemeColorSource) Read() ([3]uint8, error) {
-	return readColorKey(s.key, colorsToml)
+	return readColorKey(s.tomlColorKey, colorsToml)
 }
 
 func (s *ThemeColorSource) WatchDir() string {
 	return filepath.Dir(themeNameFile)
 }
 
-func (s *ThemeColorSource) IsTrigger(path string) bool {
-	a, _ := filepath.Abs(path)
-	tn, _ := filepath.Abs(themeNameFile)
-	if a == tn {
+func (s *ThemeColorSource) IsTrigger(eventPath string) bool {
+	absEvent, _ := filepath.Abs(eventPath)
+	absThemeName, _ := filepath.Abs(themeNameFile)
+	if absEvent == absThemeName {
 		return true
 	}
-	ct, _ := filepath.Abs(colorsToml)
-	return a == ct
+	absColorsToml, _ := filepath.Abs(colorsToml)
+	return absEvent == absColorsToml
 }
 
 // Sentinel combines theme.name and colors.toml mtimes so poll/watch react when
-// either changes (same directory events can arrive for either file).
+// either changes (both live under ~/.config/omarchy/current/).
 func (s *ThemeColorSource) Sentinel() (string, error) {
-	tfi, err := os.Stat(themeNameFile)
+	themeNameInfo, err := os.Stat(themeNameFile)
 	if err != nil {
 		return "", err
 	}
-	out := strconv.FormatInt(tfi.ModTime().UnixNano(), 10)
-	if cfi, err := os.Stat(colorsToml); err == nil {
-		out += ":" + strconv.FormatInt(cfi.ModTime().UnixNano(), 10)
+	fingerprint := strconv.FormatInt(themeNameInfo.ModTime().UnixNano(), 10)
+	if colorsInfo, err := os.Stat(colorsToml); err == nil {
+		fingerprint += ":" + strconv.FormatInt(colorsInfo.ModTime().UnixNano(), 10)
 	}
-	return out, nil
+	return fingerprint, nil
 }
 
 // BgColorSource computes the average color of the current Omarchy wallpaper.
@@ -301,29 +308,29 @@ func (s *BgColorSource) WatchDir() string {
 	return filepath.Dir(backgroundLink)
 }
 
-func (s *BgColorSource) IsTrigger(path string) bool {
-	a, _ := filepath.Abs(path)
-	b, _ := filepath.Abs(backgroundLink)
-	return a == b
+func (s *BgColorSource) IsTrigger(eventPath string) bool {
+	absEvent, _ := filepath.Abs(eventPath)
+	absBackgroundSymlink, _ := filepath.Abs(backgroundLink)
+	return absEvent == absBackgroundSymlink
 }
 
 func (s *BgColorSource) Sentinel() (string, error) {
-	target, err := os.Readlink(backgroundLink)
+	wallpaperTargetPath, err := os.Readlink(backgroundLink)
 	if err != nil {
 		return "", err
 	}
-	return target, nil
+	return wallpaperTargetPath, nil
 }
 
-// makeSource constructs the appropriate ColorSource from a CLI name.
-func makeSource(name string) ColorSource {
-	switch name {
+// makeSource maps CLI/config names to the concrete ColorSource implementation.
+func makeSource(sourceName string) ColorSource {
+	switch sourceName {
 	case "bg":
 		return &BgColorSource{}
 	case "fg", "foreground":
-		return &ThemeColorSource{key: "foreground"}
+		return &ThemeColorSource{tomlColorKey: "foreground"}
 	default:
-		return &ThemeColorSource{key: "accent"}
+		return &ThemeColorSource{tomlColorKey: "accent"}
 	}
 }
 
@@ -331,26 +338,27 @@ func makeSource(name string) ColorSource {
 // Push logic
 // ---------------------------------------------------------------------------
 
-type state struct{ lastColor *[3]uint8 }
+// pushTracker remembers the last RGB sent to WLED so we skip duplicate POSTs.
+type pushTracker struct{ lastSentRGB *[3]uint8 }
 
 // pushIfChanged reads the current color, applies saturation, and sends it to
 // WLED only if it differs from the last push. Silently skips read errors
 // (e.g. theme files not yet present).
-func pushIfChanged(src ColorSource, st *state, ip string, brightness int, saturation float64) {
-	color, err := src.Read()
+func pushIfChanged(src ColorSource, tracker *pushTracker, wledIP string, brightness int, saturation float64) {
+	rgb, err := src.Read()
 	if err != nil {
 		return
 	}
-	color = applySaturation(color, saturation)
-	if st.lastColor != nil && *st.lastColor == color {
+	rgb = applySaturation(rgb, saturation)
+	if tracker.lastSentRGB != nil && *tracker.lastSentRGB == rgb {
 		return
 	}
-	st.lastColor = &color
-	if err := sendColorToWLED(ip, color, brightness); err != nil {
+	tracker.lastSentRGB = &rgb
+	if err := sendColorToWLED(wledIP, rgb, brightness); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return
 	}
-	fmt.Printf("Updated WLED → rgb%v bri=%d sat=%.2f\n", color, brightness, saturation)
+	fmt.Printf("Updated WLED → rgb%v bri=%d sat=%.2f\n", rgb, brightness, saturation)
 }
 
 // ---------------------------------------------------------------------------
@@ -359,66 +367,64 @@ func pushIfChanged(src ColorSource, st *state, ip string, brightness int, satura
 
 // watchSource watches the directory reported by src.WatchDir() and calls
 // pushIfChanged whenever src.IsTrigger fires.
-func watchSource(ip string, brightness int, saturation float64, src ColorSource) error {
-	st := &state{}
-	pushIfChanged(src, st, ip, brightness, saturation)
+func watchSource(wledIP string, brightness int, saturation float64, src ColorSource) error {
+	tracker := &pushTracker{}
+	pushIfChanged(src, tracker, wledIP, brightness, saturation)
 
-	w, err := fsnotify.NewWatcher()
+	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("cannot create watcher: %w", err)
 	}
-	defer w.Close()
+	defer watcher.Close()
 
-	dir := src.WatchDir()
-	if err := w.Add(dir); err != nil {
-		return fmt.Errorf("cannot watch %s: %w", dir, err)
+	watchDirectory := src.WatchDir()
+	if err := watcher.Add(watchDirectory); err != nil {
+		return fmt.Errorf("cannot watch %s: %w", watchDirectory, err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Watching %s for changes — Ctrl-C to stop\n", dir)
+	fmt.Fprintf(os.Stderr, "Watching %s for changes — Ctrl-C to stop\n", watchDirectory)
 
 	for {
 		select {
-		case ev, ok := <-w.Events:
+		case event, ok := <-watcher.Events:
 			if !ok {
 				return nil
 			}
-			if src.IsTrigger(ev.Name) {
+			if src.IsTrigger(event.Name) {
 				time.Sleep(200 * time.Millisecond)
-				pushIfChanged(src, st, ip, brightness, saturation)
+				pushIfChanged(src, tracker, wledIP, brightness, saturation)
 			}
-		case err, ok := <-w.Errors:
+		case watchErr, ok := <-watcher.Errors:
 			if !ok {
 				return nil
 			}
-			fmt.Fprintf(os.Stderr, "Watch error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Watch error: %v\n", watchErr)
 		}
 	}
 }
 
-// pollTick runs one "sentinel changed" check: if the source sentinel moved on,
-// push the new color. Used by poll and by tests (mirrors Python _poll body).
-func pollTick(ip string, brightness int, saturation float64, src ColorSource, st *state, lastSentinel *string) {
-	sentinel, err := src.Sentinel()
+// pollTick runs when the ColorSource sentinel string changes (theme fingerprint
+// or wallpaper path). Used by poll loop and tests.
+func pollTick(wledIP string, brightness int, saturation float64, src ColorSource, tracker *pushTracker, previousSentinel *string) {
+	currentSentinel, err := src.Sentinel()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return
 	}
-	if sentinel == *lastSentinel {
+	if currentSentinel == *previousSentinel {
 		return
 	}
-	*lastSentinel = sentinel
+	*previousSentinel = currentSentinel
 	time.Sleep(200 * time.Millisecond)
-	pushIfChanged(src, st, ip, brightness, saturation)
+	pushIfChanged(src, tracker, wledIP, brightness, saturation)
 }
 
-// poll is a 1-second loop fallback used when fsnotify is unavailable. In the
-// Go version fsnotify is always available (it is a compiled-in dependency),
-// so this path is only reached on platforms where inotify is unsupported.
-func poll(ip string, brightness int, saturation float64, src ColorSource) {
-	st := &state{}
-	var lastSentinel string
+// poll is the fsnotify fallback: cheap sleep loop comparing Sentinel() strings.
+func poll(wledIP string, brightness int, saturation float64, src ColorSource) {
+	tracker := &pushTracker{}
+	var previousSentinel string
 	for {
-		pollTick(ip, brightness, saturation, src, st, &lastSentinel)
+		pollTick(wledIP, brightness, saturation, src, tracker, &previousSentinel)
 		time.Sleep(time.Second)
 	}
 }
@@ -427,7 +433,7 @@ func poll(ip string, brightness int, saturation float64, src ColorSource) {
 // Config
 // ---------------------------------------------------------------------------
 
-var configLineRe = regexp.MustCompile(`(?m)^(\w+)\s*=\s*(.+)$`)
+var flatTomlConfigLinePattern = regexp.MustCompile(`(?m)^(\w+)\s*=\s*(.+)$`)
 
 // loadConfig reads ~/.config/omarchy-wled/config.toml and returns a flat
 // string map. The format is intentionally simple (no arrays or nested tables)
@@ -438,7 +444,7 @@ func loadConfig() map[string]string {
 		return map[string]string{}
 	}
 	cfg := map[string]string{}
-	for _, m := range configLineRe.FindAllStringSubmatch(string(data), -1) {
+	for _, m := range flatTomlConfigLinePattern.FindAllStringSubmatch(string(data), -1) {
 		val := strings.TrimSpace(m[2])
 		val = strings.Trim(val, `"`)
 		cfg[m[1]] = val
@@ -448,12 +454,13 @@ func loadConfig() map[string]string {
 
 // cliOpts holds parsed flags and positional args after parseArgs.
 type cliOpts struct {
-	sourceName   string
-	brightness   int
-	saturationIn float64 // from flag; -1 means use per-source default
-	once         bool
-	showVersion  bool
-	wledIP       string
+	sourceName string
+	brightness int
+	// saturationOrUnset is the -saturation flag value; -1 means “pick default from source.”
+	saturationOrUnset float64
+	once              bool
+	showVersion       bool
+	wledIP            string
 }
 
 // parseArgs parses argv using the same defaults as loadConfig merge rules.
@@ -502,7 +509,7 @@ func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts
 
 	opts.sourceName = *sourceName
 	opts.brightness = *brightness
-	opts.saturationIn = *saturationFlag
+	opts.saturationOrUnset = *saturationFlag
 	opts.once = *once
 
 	opts.wledIP = cfg["ip"]
@@ -537,25 +544,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	saturation := opts.saturationIn
-	if saturation < 0 {
+	effectiveSaturation := opts.saturationOrUnset
+	if effectiveSaturation < 0 {
 		if opts.sourceName == "accent" {
-			saturation = 1.2
+			effectiveSaturation = 1.2
 		} else {
-			saturation = 1.0
+			effectiveSaturation = 1.0
 		}
 	}
 
 	src := makeSource(opts.sourceName)
 
 	if opts.once {
-		st := &state{}
-		pushIfChanged(src, st, opts.wledIP, opts.brightness, saturation)
+		tracker := &pushTracker{}
+		pushIfChanged(src, tracker, opts.wledIP, opts.brightness, effectiveSaturation)
 		return
 	}
 
-	if err := watchSource(opts.wledIP, opts.brightness, saturation, src); err != nil {
+	if err := watchSource(opts.wledIP, opts.brightness, effectiveSaturation, src); err != nil {
 		fmt.Fprintf(os.Stderr, "Watch failed: %v — falling back to polling\n", err)
-		poll(opts.wledIP, opts.brightness, saturation, src)
+		poll(opts.wledIP, opts.brightness, effectiveSaturation, src)
 	}
 }
