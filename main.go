@@ -192,6 +192,57 @@ func readBgGradientHorizontal(wallpaperSymlinkPath string) (left, right [3]uint8
 	return left, right, err
 }
 
+// wallpaperCenterRowColorsForLEDs samples the horizontal midline of the wallpaper,
+// applies the same γ LUT as readBgColor, then Catmull-Rom rescales that row to
+// exactly ledCount pixels (one true-color value per strip LED).
+func wallpaperCenterRowColorsForLEDs(wallpaperSymlinkPath string, ledCount int) ([][3]uint8, error) {
+	if ledCount <= 0 {
+		return nil, fmt.Errorf("ledCount must be positive")
+	}
+	resolvedImagePath, err := filepath.EvalSymlinks(wallpaperSymlinkPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot resolve wallpaper symlink: %w", err)
+	}
+	file, err := os.Open(resolvedImagePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	decoded, _, err := image.Decode(file)
+	if err != nil {
+		return nil, fmt.Errorf("cannot decode image %s: %w", resolvedImagePath, err)
+	}
+	bounds := decoded.Bounds()
+	if bounds.Dx()*bounds.Dy() == 0 {
+		return nil, fmt.Errorf("empty image")
+	}
+	rowY := bounds.Min.Y + bounds.Dy()/2
+	rowW := bounds.Dx()
+	rowRgba := image.NewRGBA(image.Rect(0, 0, rowW, 1))
+	draw.Draw(rowRgba, rowRgba.Bounds(), decoded, image.Point{X: bounds.Min.X, Y: rowY}, draw.Src)
+
+	pix := rowRgba.Pix
+	for i := 0; i < len(pix); i += 4 {
+		pix[i+0] = wallpaperSrgbToLinearByte[pix[i+0]]
+		pix[i+1] = wallpaperSrgbToLinearByte[pix[i+1]]
+		pix[i+2] = wallpaperSrgbToLinearByte[pix[i+2]]
+	}
+
+	outStrip := image.NewRGBA(image.Rect(0, 0, ledCount, 1))
+	xdraw.CatmullRom.Scale(outStrip, outStrip.Bounds(), rowRgba, rowRgba.Bounds(), draw.Src, nil)
+
+	out := make([][3]uint8, ledCount)
+	for x := 0; x < ledCount; x++ {
+		c := outStrip.RGBAAt(x, 0)
+		out[x] = [3]uint8{
+			wallpaperLinearToSrgbByte[c.R],
+			wallpaperLinearToSrgbByte[c.G],
+			wallpaperLinearToSrgbByte[c.B],
+		}
+	}
+	return out, nil
+}
+
 // ---------------------------------------------------------------------------
 // Color transformation
 // ---------------------------------------------------------------------------
@@ -379,37 +430,15 @@ func rgbToHex(r, g, b uint8) string {
 	return fmt.Sprintf("%02X%02X%02X", r, g, b)
 }
 
-func lerpChannel(a, b uint8, t float64) uint8 {
-	return uint8(math.Round(float64(a) + t*(float64(b)-float64(a))))
-}
-
-// gradientHexRow is one RRGGBB per LED: linear ramp left→right in sRGB (matches strip layout).
-func gradientHexRow(left, right [3]uint8, n int) []string {
-	if n <= 0 {
-		return nil
+// sendSpatialGradientToWLED paints per-LED colors using seg[].i (one entry per physical LED).
+func sendSpatialGradientToWLED(ip string, stripRGB [][3]uint8, brightness int) error {
+	if len(stripRGB) == 0 {
+		return fmt.Errorf("no strip colors")
 	}
-	if n == 1 {
-		return []string{rgbToHex(left[0], left[1], left[2])}
+	hexes := make([]string, len(stripRGB))
+	for i, rgb := range stripRGB {
+		hexes[i] = rgbToHex(rgb[0], rgb[1], rgb[2])
 	}
-	out := make([]string, n)
-	for i := 0; i < n; i++ {
-		t := float64(i) / float64(n-1)
-		out[i] = rgbToHex(
-			lerpChannel(left[0], right[0], t),
-			lerpChannel(left[1], right[1], t),
-			lerpChannel(left[2], right[2], t),
-		)
-	}
-	return out
-}
-
-// sendSpatialGradientToWLED paints a true left→right fade using seg[].i (not the Gradient FX,
-// which blends colors with its own palette/sweep semantics).
-func sendSpatialGradientToWLED(ip string, left, right [3]uint8, brightness, ledCount int) error {
-	if ledCount <= 0 {
-		return fmt.Errorf("LED count must be positive")
-	}
-	hexes := gradientHexRow(left, right, ledCount)
 	url := wledJSONURL(ip, "state")
 	bri := max(0, min(255, brightness))
 
@@ -549,10 +578,27 @@ type pushOpts struct {
 	gradientLEDs int // 0 = GET /json/info for strip length (spatial fade only)
 }
 
-// gradientSent records last gradient push for deduplication (includes LED count).
+// gradientSent records last gradient strip for deduplication.
 type gradientSent struct {
-	pair [2][3]uint8
-	leds int
+	colors [][3]uint8
+}
+
+func dupGradientColors(src [][3]uint8) [][3]uint8 {
+	out := make([][3]uint8, len(src))
+	copy(out, src)
+	return out
+}
+
+func gradientSlicesEqual(a, b [][3]uint8) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // pushTracker remembers the last solid or gradient push so we skip duplicate POSTs.
@@ -577,18 +623,18 @@ func (t *pushTracker) markSolid(rgb [3]uint8) {
 	t.lastGradient = nil
 }
 
-func (t *pushTracker) shouldSendGradient(pair [2][3]uint8, leds int) bool {
+func (t *pushTracker) shouldSendGradient(colors [][3]uint8) bool {
 	if t.lastSolid != nil {
 		return true
 	}
 	if t.lastGradient == nil {
 		return true
 	}
-	return t.lastGradient.pair != pair || t.lastGradient.leds != leds
+	return !gradientSlicesEqual(t.lastGradient.colors, colors)
 }
 
-func (t *pushTracker) markGradient(pair [2][3]uint8, leds int) {
-	t.lastGradient = &gradientSent{pair: pair, leds: leds}
+func (t *pushTracker) markGradient(colors [][3]uint8) {
+	t.lastGradient = &gradientSent{colors: dupGradientColors(colors)}
 	t.lastSolid = nil
 }
 
@@ -600,28 +646,29 @@ func pushIfChanged(src ColorSource, tracker *pushTracker, wledIP string, brightn
 		if _, ok := src.(*BgColorSource); !ok {
 			return
 		}
-		left, right, err := readBgGradientHorizontal(wallpaperSymlink())
-		if err != nil {
-			return
-		}
-		left = applySaturation(left, saturation)
-		right = applySaturation(right, saturation)
-		pair := [2][3]uint8{left, right}
 		n, err := resolveGradientLEDCount(wledIP, opts.gradientLEDs)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return
 		}
-		if !tracker.shouldSendGradient(pair, n) {
+		stripRGB, err := wallpaperCenterRowColorsForLEDs(wallpaperSymlink(), n)
+		if err != nil {
 			return
 		}
-		tracker.markGradient(pair, n)
-		if err := sendSpatialGradientToWLED(wledIP, left, right, brightness, n); err != nil {
+		for i := range stripRGB {
+			stripRGB[i] = applySaturation(stripRGB[i], saturation)
+		}
+		if !tracker.shouldSendGradient(stripRGB) {
+			return
+		}
+		tracker.markGradient(stripRGB)
+		if err := sendSpatialGradientToWLED(wledIP, stripRGB, brightness); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return
 		}
-		fmt.Printf("Updated WLED → gradient rgb%v→%v bri=%d sat=%.2f leds=%d\n",
-			left, right, brightness, saturation, n)
+		a, z := stripRGB[0], stripRGB[len(stripRGB)-1]
+		fmt.Printf("Updated WLED → gradient strip rgb%v…%v bri=%d sat=%.2f leds=%d\n",
+			a, z, brightness, saturation, n)
 		return
 	}
 

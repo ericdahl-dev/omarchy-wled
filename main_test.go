@@ -189,9 +189,8 @@ func TestSendSpatialGradientToWLEDPostsPerLEDHex(t *testing.T) {
 	wledURLOverride = srv.URL + "/json/state"
 	t.Cleanup(func() { wledURLOverride = orig })
 
-	left := [3]uint8{255, 0, 0}
-	right := [3]uint8{0, 0, 255}
-	if err := sendSpatialGradientToWLED("ignored", left, right, 199, 3); err != nil {
+	strip := [][3]uint8{{255, 0, 0}, {0, 255, 0}, {0, 0, 255}}
+	if err := sendSpatialGradientToWLED("ignored", strip, 199); err != nil {
 		t.Fatal(err)
 	}
 	var payload map[string]any
@@ -208,6 +207,9 @@ func TestSendSpatialGradientToWLEDPostsPerLEDHex(t *testing.T) {
 	}
 	if s := i[0].(string); s != "FF0000" {
 		t.Errorf("LED0 hex: got %q want FF0000", s)
+	}
+	if s := i[1].(string); s != "00FF00" {
+		t.Errorf("LED1 hex: got %q want 00FF00", s)
 	}
 	if s := i[2].(string); s != "0000FF" {
 		t.Errorf("LED2 hex: got %q want 0000FF", s)
@@ -417,6 +419,41 @@ func TestReadBgColorAveragesLinear(t *testing.T) {
 
 // Like test_omarchy_wled.test_read_bg_color_linear_avg_brighter_than_naive on main:
 // half red / half black — linear-spot average should be well above naive 127.
+func TestWallpaperCenterRowMapsToLEDs(t *testing.T) {
+	dir := t.TempDir()
+	img := image.NewRGBA(image.Rect(0, 0, 3, 1))
+	img.Set(0, 0, color.RGBA{R: 255, A: 255})
+	img.Set(1, 0, color.RGBA{G: 255, A: 255})
+	img.Set(2, 0, color.RGBA{B: 255, A: 255})
+	imgPath := filepath.Join(dir, "row.png")
+	f, err := os.Create(imgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	f.Close()
+	link := filepath.Join(dir, "background")
+	if err := os.Symlink(imgPath, link); err != nil {
+		t.Fatal(err)
+	}
+	colors, err := wallpaperCenterRowColorsForLEDs(link, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(colors) != 3 {
+		t.Fatalf("want 3 samples, got %d", len(colors))
+	}
+	if colors[0][0] <= colors[0][2] {
+		t.Errorf("first LED should read redder than blue: %v", colors[0])
+	}
+	if colors[2][2] <= colors[2][0] {
+		t.Errorf("last LED should read bluer than red: %v", colors[2])
+	}
+}
+
 func TestReadBgGradientHorizontalHalves(t *testing.T) {
 	dir := t.TempDir()
 	img := image.NewRGBA(image.Rect(0, 0, 4, 2))
