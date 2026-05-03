@@ -33,7 +33,7 @@ Options:
   -source {accent,fg,foreground,bg}  Color source: accent (default), fg / foreground (colors.toml `foreground` = UI font color), or bg (wallpaper average)
   -brightness 0-255       LED brightness (default 255)
   -saturation SCALE       Saturation multiplier (0.0=greyscale, 1.0=unchanged, >1.0=boost; default 1.2 for accent, 1.0 for fg/bg)
-  -gradient               With `-source bg`, sample left/right wallpaper halves and drive WLED’s Gradient effect (two color stops)
+  -gradient               With `-source bg`, sample left/right wallpaper halves and drive WLED’s Gradient effect (effect speed 0 for a static fade)
   -gradient-fx ID         WLED effect index for Gradient (stock firmware uses 46; override if yours differs)
   -once                   Send once and exit
   -v, -version            Print version and exit (release builds show tag, e.g. v1.2.3)

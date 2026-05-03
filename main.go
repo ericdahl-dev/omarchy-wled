@@ -277,8 +277,7 @@ func hsvToRGB(h, s, v float64) [3]uint8 {
 // When empty (the default), sendColorToWLED constructs the real WLED URL.
 var wledURLOverride string
 
-// defaultGradientEffectID is WLED's stock “Gradient” mode (FX_MODE_GRADIENT in
-// wled/FX.h). Effect indices can differ in forks; use -gradient-fx to override.
+// defaultGradientEffectID is WLED's stock “Gradient” mode (FX_MODE_GRADIENT).
 const defaultGradientEffectID = 46
 
 // sendColorToWLED pushes a solid color to a WLED device via its JSON API.
@@ -315,8 +314,8 @@ func sendColorToWLED(ip string, rgb [3]uint8, brightness int) error {
 	return nil
 }
 
-// sendGradientToWLED sets segment colors and the Gradient effect (two sRGB
-// stops + black slot) so the strip shows a left→right blend matching the wallpaper.
+// sendGradientToWLED applies the Gradient effect with two color stops. sx=0 sets
+// minimum effect speed so the sweep stays visually static on typical WLED builds.
 func sendGradientToWLED(ip string, left, right [3]uint8, brightness, effectID int) error {
 	url := wledURLOverride
 	if url == "" {
@@ -328,6 +327,8 @@ func sendGradientToWLED(ip string, left, right [3]uint8, brightness, effectID in
 		"seg": []map[string]any{
 			{
 				"fx": effectID,
+				"sx": 0,
+				"ix": 128,
 				"col": [][]int{
 					{int(left[0]), int(left[1]), int(left[2])},
 					{int(right[0]), int(right[1]), int(right[2])},

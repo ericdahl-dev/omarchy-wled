@@ -205,6 +205,12 @@ func TestSendGradientToWLEDPostsCorrectPayload(t *testing.T) {
 	if int(seg0["fx"].(float64)) != 46 {
 		t.Errorf("fx: got %v want 46", seg0["fx"])
 	}
+	if int(seg0["sx"].(float64)) != 0 {
+		t.Errorf("sx: got %v want 0 (static gradient)", seg0["sx"])
+	}
+	if int(seg0["ix"].(float64)) != 128 {
+		t.Errorf("ix: got %v want 128", seg0["ix"])
+	}
 	col := seg0["col"].([]any)
 	checkSlot := func(slot int, wantR, wantG, wantB int) {
 		t.Helper()
