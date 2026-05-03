@@ -27,7 +27,9 @@ Sync color from an [Omarchy](https://omarchy.org) desktop environment to a [WLED
 ## File Layout
 
 ```
-main.go                 — Go CLI binary (all core logic, single-file)
+main.go                 — CLI, Color Source, push/watch/poll, config
+wallpaper.go            — Wallpaper / Background decode, γ pipeline, column→LED strip
+wled.go                 — WLED HTTP client (solid, spatial seg.i, LED count)
 main_test.go            — Go test suite
 omarchy_wled.py         — Python source (used by TUI only)
 omarchy_wled_tui.py     — Textual TUI (omarchy-wled-tui entry point)
