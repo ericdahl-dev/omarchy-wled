@@ -1,16 +1,23 @@
 # ADR-0001: Single-file architecture
 
 **Date:** 2026-05-01  
-**Status:** Accepted
+**Status:** Superseded (historical)
 
-## Decision
+## Original decision (Python)
 
-All logic lives in `omarchy_wled.py`. No package structure, no sub-modules.
+All logic lived in `omarchy_wled.py`. No package structure, no sub-modules.
 
-## Reason
+## Current state
 
-The tool is small and purpose-specific. A single file is easier to install via AUR, inspect, and distribute. Adding package structure would increase scaffolding with no benefit at this scale.
+The **core shipped product is Go**: `main.go` plus focused companions (`wallpaper.go`,
+`wled.go`, …). The Python single-file implementation has been **removed** from the tree
+(see ADR-0005).
+
+## Reason (historical)
+
+The tool was small and purpose-specific. A single file was easier to install via AUR,
+inspect, and distribute.
 
 ## Consequences
 
-If the codebase grows significantly (multiple sources, transports, or a config system), revisit and split into a proper package. The `ColorSource` protocol already defines a clean seam for that split.
+The `ColorSource` seam in Go remains the extension point for new sources.

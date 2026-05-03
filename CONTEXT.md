@@ -30,13 +30,12 @@ Sync color from an [Omarchy](https://omarchy.org) desktop environment to a [WLED
 main.go                 — CLI, Color Source, push/watch/poll, config
 wallpaper.go            — Wallpaper / Background decode, γ pipeline, column→LED strip
 wled.go                 — WLED HTTP client (solid, spatial seg.i, LED count)
+tui.go                  — Bubble Tea TUI (`omarchy-wled tui`)
+tui_config.go           — TUI config, systemd helpers, live preview
 main_test.go            — Go test suite
-omarchy_wled.py         — Python source (used by TUI only)
-omarchy_wled_tui.py     — Textual TUI (omarchy-wled-tui entry point)
-test_omarchy_wled.py    — Python pytest suite (covers omarchy_wled.py)
+tui_config_test.go      — TUI config / systemd unit tests
 omarchy-wled@.service   — systemd user service template
 PKGBUILD                — AUR package definition (Go build)
-pyproject.toml          — Python package metadata (TUI only)
 ```
 
 ## Key Paths (runtime)
@@ -45,6 +44,6 @@ pyproject.toml          — Python package metadata (TUI only)
 ~/.config/omarchy/current/theme/colors.toml   — accent/fg/bg hex values
 ~/.config/omarchy/current/theme.name          — rewritten on theme switch (watch trigger)
 ~/.config/omarchy/current/background          — symlink to current wallpaper image
-~/.config/omarchy-wled/config.toml            — optional saved settings (ip, source, brightness, saturation)
+~/.config/omarchy-wled/config.toml            — optional saved settings (ip, source, brightness, saturation, optional gradient)
 ```
 

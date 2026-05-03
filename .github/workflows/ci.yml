@@ -28,23 +28,3 @@ jobs:
 
       - name: Test
         run: go test ./...
-
-  test-python:
-    name: Python tests (TUI source)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: requirements.txt
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt pytest
-
-      - name: Run tests
-        run: pytest test_omarchy_wled.py -v

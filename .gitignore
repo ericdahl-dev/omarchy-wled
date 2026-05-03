@@ -4,6 +4,7 @@
 *.db
 .beads-credential-key
 __pycache__/
+.pytest_cache/
 
 # Go build artifact
 omarchy-wled
