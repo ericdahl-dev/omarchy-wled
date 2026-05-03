@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"image"
+	"image/draw"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	xdraw "golang.org/x/image/draw"
 )
 
 // version is set at link time: go build -ldflags "-X main.version=v1.2.3"
@@ -63,10 +65,20 @@ func readColorKey(key, path string) ([3]uint8, error) {
 	return [3]uint8{}, fmt.Errorf("%s color not found in %s", key, path)
 }
 
-// readBgColor computes the perceptual (linear-light) average color of the
-// current Omarchy wallpaper image. The symlink at backgroundLink is resolved
-// to the actual image file, which must be a format supported by Go's image
-// stdlib (PNG, JPEG).
+// bgLUT* match omarchy_wled.read_bg_color: PIL point() LUT then resize(1,1)
+// with high-quality filter — same idea as Python pre-map + downscale (fast vs full Pow per pixel).
+var bgLUTLinearFromSRGB, bgLUTSRGBFromLinear [256]uint8
+
+func init() {
+	for v := 0; v < 256; v++ {
+		bgLUTLinearFromSRGB[v] = uint8(math.Round(math.Pow(float64(v)/255.0, 2.2) * 255.0))
+		bgLUTSRGBFromLinear[v] = uint8(math.Round(math.Pow(float64(v)/255.0, 1.0/2.2) * 255.0))
+	}
+}
+
+// readBgColor computes the perceptual average like the Python implementation:
+// sRGB→linear LUT per channel, Catmull-Rom scale to 1×1 (same role as PIL LANCZOS),
+// then linear→sRGB LUT — O(n) LUT pass + one resize instead of per-pixel Pow + sum.
 func readBgColor(linkPath string) ([3]uint8, error) {
 	imgPath, err := filepath.EvalSymlinks(linkPath)
 	if err != nil {
@@ -85,41 +97,29 @@ func readBgColor(linkPath string) ([3]uint8, error) {
 	}
 
 	bounds := img.Bounds()
-	var sumR, sumG, sumB float64
-	n := (bounds.Max.X - bounds.Min.X) * (bounds.Max.Y - bounds.Min.Y)
-	if n == 0 {
+	if bounds.Dx()*bounds.Dy() == 0 {
 		return [3]uint8{}, fmt.Errorf("empty image")
 	}
 
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			rr, gg, bb, _ := img.At(x, y).RGBA() // 16-bit channels
-			sumR += srgbToLinear(uint8(rr >> 8))
-			sumG += srgbToLinear(uint8(gg >> 8))
-			sumB += srgbToLinear(uint8(bb >> 8))
-		}
+	rgba := image.NewRGBA(bounds)
+	draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
+
+	pix := rgba.Pix
+	for i := 0; i < len(pix); i += 4 {
+		pix[i+0] = bgLUTLinearFromSRGB[pix[i+0]]
+		pix[i+1] = bgLUTLinearFromSRGB[pix[i+1]]
+		pix[i+2] = bgLUTLinearFromSRGB[pix[i+2]]
 	}
 
-	fn := float64(n)
+	out := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	xdraw.CatmullRom.Scale(out, out.Bounds(), rgba, bounds, draw.Src, nil)
+
+	c := out.RGBAAt(0, 0)
 	return [3]uint8{
-		linearToSrgb(sumR / fn),
-		linearToSrgb(sumG / fn),
-		linearToSrgb(sumB / fn),
+		bgLUTSRGBFromLinear[c.R],
+		bgLUTSRGBFromLinear[c.G],
+		bgLUTSRGBFromLinear[c.B],
 	}, nil
-}
-
-func srgbToLinear(v uint8) float64 {
-	return math.Pow(float64(v)/255.0, 2.2)
-}
-
-func linearToSrgb(v float64) uint8 {
-	if v <= 0 {
-		return 0
-	}
-	if v >= 1 {
-		return 255
-	}
-	return uint8(math.Round(math.Pow(v, 1.0/2.2) * 255))
 }
 
 // ---------------------------------------------------------------------------
