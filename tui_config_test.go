@@ -157,6 +157,104 @@ func TestServiceEnableWritesExecStart(t *testing.T) {
 	}
 }
 
+func TestStaticUnitExecStartLooksLikeLegacyPython(t *testing.T) {
+	if !staticUnitExecStartLooksLikeLegacyPython([]byte("[Service]\nExecStart=/usr/bin/python3 -m omarchy_wled\n")) {
+		t.Fatal("python module")
+	}
+	if !staticUnitExecStartLooksLikeLegacyPython([]byte("ExecStart=/home/u/.local/bin/omarchy-wled-tui\n")) {
+		t.Fatal("tui entry")
+	}
+	if staticUnitExecStartLooksLikeLegacyPython([]byte("ExecStart=/home/u/.local/bin/omarchy-wled\n")) {
+		t.Fatal("go binary path should not match")
+	}
+}
+
+func TestEnableRemovesOmarchyWledTemplateInstances(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	wants := filepath.Join(tmp, ".config/systemd/user/default.target.wants")
+	if err := os.MkdirAll(wants, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(wants, "omarchy-wled@192.168.99.1.service")
+	if err := os.WriteFile(legacy, []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls [][]string
+	testSystemctl = func(name string, arg ...string) int {
+		calls = append(calls, append([]string{name}, arg...))
+		return 0
+	}
+	t.Cleanup(func() { testSystemctl = nil })
+
+	sc := newServiceController("10.0.0.1")
+	if err := sc.Enable(); err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, c := range calls {
+		if len(c) >= 5 && c[0] == "systemctl" && c[2] == "disable" && c[3] == "--now" && c[4] == "omarchy-wled@192.168.99.1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected disable legacy template, calls=%#v", calls)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatal("legacy symlink file should be removed")
+	}
+}
+
+func TestEnableRemovesPythonStaticUnitBeforeInstall(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	udir := filepath.Join(tmp, ".config/systemd/user")
+	if err := os.MkdirAll(udir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldUnit := filepath.Join(udir, "omarchy-wled.service")
+	py := `[Service]
+ExecStart=/usr/bin/python3 -m omarchy_wled --watch
+`
+	if err := os.WriteFile(oldUnit, []byte(py), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls [][]string
+	testSystemctl = func(name string, arg ...string) int {
+		calls = append(calls, append([]string{name}, arg...))
+		return 0
+	}
+	t.Cleanup(func() { testSystemctl = nil })
+
+	sc := newServiceController("10.0.0.1")
+	if err := sc.Enable(); err != nil {
+		t.Fatal(err)
+	}
+
+	disableStatic := false
+	for _, c := range calls {
+		if len(c) >= 5 && c[0] == "systemctl" && c[4] == "omarchy-wled" &&
+			c[2] == "disable" && c[3] == "--now" {
+			disableStatic = true
+		}
+	}
+	if !disableStatic {
+		t.Fatalf("expected disable omarchy-wled for python unit, calls=%#v", calls)
+	}
+	data, err := os.ReadFile(oldUnit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "python") {
+		t.Fatal("unit should be replaced with Go binary ExecStart")
+	}
+}
+
 func TestServiceDisableCommand(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

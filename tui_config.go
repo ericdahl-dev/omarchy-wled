@@ -274,9 +274,6 @@ func (s *serviceController) installUnitFile(execPath string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	// Remove legacy instance symlink if present (old omarchy-wled@IP template).
-	legacy := filepath.Join(userHome(), userSystemdDir, "default.target.wants", fmt.Sprintf("omarchy-wled@%s.service", s.ip))
-	_ = os.Remove(legacy)
 
 	unit := filepath.Join(dir, "omarchy-wled.service")
 	body := fmt.Sprintf(`[Unit]
@@ -301,7 +298,57 @@ WantedBy=default.target
 
 func (s *serviceController) unitName() string { return "omarchy-wled" }
 
+// cleanupLegacyOmarchyWledUserUnits removes leftover systemd user units from older setups:
+// - omarchy-wled@*.service template instances (AUR/README copy-paste)
+// - a static omarchy-wled.service whose ExecStart clearly runs the Python stack
+func (s *serviceController) cleanupLegacyOmarchyWledUserUnits() {
+	base := filepath.Join(userHome(), userSystemdDir)
+	for _, pattern := range []string{
+		filepath.Join(base, "default.target.wants", "omarchy-wled@*.service"),
+		filepath.Join(base, "omarchy-wled@*.service"),
+	} {
+		matches, _ := filepath.Glob(pattern)
+		for _, path := range matches {
+			unit := strings.TrimSuffix(filepath.Base(path), ".service")
+			_ = s.system("systemctl", "--user", "disable", "--now", unit)
+			_ = os.Remove(path)
+		}
+	}
+	path := filepath.Join(base, "omarchy-wled.service")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	if !staticUnitExecStartLooksLikeLegacyPython(data) {
+		return
+	}
+	_ = s.system("systemctl", "--user", "disable", "--now", "omarchy-wled")
+	_ = os.Remove(path)
+}
+
+func staticUnitExecStartLooksLikeLegacyPython(unit []byte) bool {
+	for _, line := range strings.Split(string(unit), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line[0] == '#' {
+			continue
+		}
+		v := strings.ToLower(line)
+		if !strings.HasPrefix(v, "execstart=") {
+			continue
+		}
+		return strings.Contains(v, "python") ||
+			strings.Contains(v, "pipx") ||
+			strings.Contains(v, "pip ") ||
+			strings.Contains(v, "uv run") ||
+			strings.Contains(v, "omarchy-wled-tui") ||
+			strings.Contains(v, "omarchy_wled")
+	}
+	return false
+}
+
 func (s *serviceController) Enable() error {
+	s.cleanupLegacyOmarchyWledUserUnits()
+
 	exe, err := os.Executable()
 	if err != nil {
 		return err
