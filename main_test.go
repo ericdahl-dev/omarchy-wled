@@ -419,13 +419,16 @@ func TestReadBgColorAveragesLinear(t *testing.T) {
 
 // Like test_omarchy_wled.test_read_bg_color_linear_avg_brighter_than_naive on main:
 // half red / half black — linear-spot average should be well above naive 127.
-func TestWallpaperCenterRowMapsToLEDs(t *testing.T) {
+func TestWallpaperColumnAverageMapsToLEDs(t *testing.T) {
 	dir := t.TempDir()
-	img := image.NewRGBA(image.Rect(0, 0, 3, 1))
-	img.Set(0, 0, color.RGBA{R: 255, A: 255})
-	img.Set(1, 0, color.RGBA{G: 255, A: 255})
-	img.Set(2, 0, color.RGBA{B: 255, A: 255})
-	imgPath := filepath.Join(dir, "row.png")
+	// 3×2: three columns (R / G / B); two rows duplicate — column averages stay pure primaries.
+	img := image.NewRGBA(image.Rect(0, 0, 3, 2))
+	for y := 0; y < 2; y++ {
+		img.Set(0, y, color.RGBA{R: 255, A: 255})
+		img.Set(1, y, color.RGBA{G: 255, A: 255})
+		img.Set(2, y, color.RGBA{B: 255, A: 255})
+	}
+	imgPath := filepath.Join(dir, "cols.png")
 	f, err := os.Create(imgPath)
 	if err != nil {
 		t.Fatal(err)
@@ -439,7 +442,7 @@ func TestWallpaperCenterRowMapsToLEDs(t *testing.T) {
 	if err := os.Symlink(imgPath, link); err != nil {
 		t.Fatal(err)
 	}
-	colors, err := wallpaperCenterRowColorsForLEDs(link, 3)
+	colors, err := wallpaperColumnAverageRowColorsForLEDs(link, 3)
 	if err != nil {
 		t.Fatal(err)
 	}

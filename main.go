@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"image"
+	"image/color"
 	"image/draw"
 	_ "image/jpeg"
 	_ "image/png"
@@ -192,10 +193,37 @@ func readBgGradientHorizontal(wallpaperSymlinkPath string) (left, right [3]uint8
 	return left, right, err
 }
 
-// wallpaperCenterRowColorsForLEDs samples the horizontal midline of the wallpaper,
-// applies the same γ LUT as readBgColor, then Catmull-Rom rescales that row to
-// exactly ledCount pixels (one true-color value per strip LED).
-func wallpaperCenterRowColorsForLEDs(wallpaperSymlinkPath string, ledCount int) ([][3]uint8, error) {
+// wallpaperColumnAverageRow collapses each vertical column to one sRGB pixel using the same
+// γ-linear averaging idea as readBgColor (average linear-proxy bytes, then γ-encode).
+func wallpaperColumnAverageRow(rgbaFull *image.RGBA) *image.RGBA {
+	b := rgbaFull.Bounds()
+	w, h := b.Dx(), b.Dy()
+	out := image.NewRGBA(image.Rect(0, 0, w, 1))
+	n := float64(h)
+	for x := 0; x < w; x++ {
+		var sumR, sumG, sumB float64
+		for y := 0; y < h; y++ {
+			c := rgbaFull.RGBAAt(b.Min.X+x, b.Min.Y+y)
+			sumR += float64(wallpaperSrgbToLinearByte[c.R])
+			sumG += float64(wallpaperSrgbToLinearByte[c.G])
+			sumB += float64(wallpaperSrgbToLinearByte[c.B])
+		}
+		lr := uint8(math.Round(sumR / n))
+		lg := uint8(math.Round(sumG / n))
+		lb := uint8(math.Round(sumB / n))
+		out.Set(x, 0, color.RGBA{
+			R: wallpaperLinearToSrgbByte[lr],
+			G: wallpaperLinearToSrgbByte[lg],
+			B: wallpaperLinearToSrgbByte[lb],
+			A: 255,
+		})
+	}
+	return out
+}
+
+// wallpaperColumnAverageRowColorsForLEDs averages each wallpaper column vertically into one
+// sample per column, then Catmull-Rom rescales that 1×width row to ledCount (one RGB per LED).
+func wallpaperColumnAverageRowColorsForLEDs(wallpaperSymlinkPath string, ledCount int) ([][3]uint8, error) {
 	if ledCount <= 0 {
 		return nil, fmt.Errorf("ledCount must be positive")
 	}
@@ -216,10 +244,9 @@ func wallpaperCenterRowColorsForLEDs(wallpaperSymlinkPath string, ledCount int) 
 	if bounds.Dx()*bounds.Dy() == 0 {
 		return nil, fmt.Errorf("empty image")
 	}
-	rowY := bounds.Min.Y + bounds.Dy()/2
-	rowW := bounds.Dx()
-	rowRgba := image.NewRGBA(image.Rect(0, 0, rowW, 1))
-	draw.Draw(rowRgba, rowRgba.Bounds(), decoded, image.Point{X: bounds.Min.X, Y: rowY}, draw.Src)
+	rgbaFull := image.NewRGBA(bounds)
+	draw.Draw(rgbaFull, bounds, decoded, bounds.Min, draw.Src)
+	rowRgba := wallpaperColumnAverageRow(rgbaFull)
 
 	pix := rowRgba.Pix
 	for i := 0; i < len(pix); i += 4 {
@@ -651,7 +678,7 @@ func pushIfChanged(src ColorSource, tracker *pushTracker, wledIP string, brightn
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return
 		}
-		stripRGB, err := wallpaperCenterRowColorsForLEDs(wallpaperSymlink(), n)
+		stripRGB, err := wallpaperColumnAverageRowColorsForLEDs(wallpaperSymlink(), n)
 		if err != nil {
 			return
 		}
