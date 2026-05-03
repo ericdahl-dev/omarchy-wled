@@ -183,15 +183,15 @@ func TestSendColorToWLEDReturnsErrorOnBadStatus(t *testing.T) {
 	}
 }
 
-func TestSendGradientToWLEDPostsCorrectPayload(t *testing.T) {
+func TestSendSpatialGradientToWLEDPostsPerLEDHex(t *testing.T) {
 	srv, body := wledServer(t, http.StatusOK)
 	orig := wledURLOverride
 	wledURLOverride = srv.URL + "/json/state"
 	t.Cleanup(func() { wledURLOverride = orig })
 
-	left := [3]uint8{255, 10, 20}
-	right := [3]uint8{5, 6, 250}
-	if err := sendGradientToWLED("ignored", left, right, 199, 46); err != nil {
+	left := [3]uint8{255, 0, 0}
+	right := [3]uint8{0, 0, 255}
+	if err := sendSpatialGradientToWLED("ignored", left, right, 199, 3); err != nil {
 		t.Fatal(err)
 	}
 	var payload map[string]any
@@ -202,26 +202,16 @@ func TestSendGradientToWLEDPostsCorrectPayload(t *testing.T) {
 		t.Errorf("bri: got %v want 199", payload["bri"])
 	}
 	seg0 := payload["seg"].([]any)[0].(map[string]any)
-	if int(seg0["fx"].(float64)) != 46 {
-		t.Errorf("fx: got %v want 46", seg0["fx"])
+	i := seg0["i"].([]any)
+	if len(i) != 3 {
+		t.Fatalf("seg.i length: got %d want 3", len(i))
 	}
-	if int(seg0["sx"].(float64)) != 0 {
-		t.Errorf("sx: got %v want 0 (static gradient)", seg0["sx"])
+	if s := i[0].(string); s != "FF0000" {
+		t.Errorf("LED0 hex: got %q want FF0000", s)
 	}
-	if int(seg0["ix"].(float64)) != 128 {
-		t.Errorf("ix: got %v want 128", seg0["ix"])
+	if s := i[2].(string); s != "0000FF" {
+		t.Errorf("LED2 hex: got %q want 0000FF", s)
 	}
-	col := seg0["col"].([]any)
-	checkSlot := func(slot int, wantR, wantG, wantB int) {
-		t.Helper()
-		ch := col[slot].([]any)
-		if int(ch[0].(float64)) != wantR || int(ch[1].(float64)) != wantG || int(ch[2].(float64)) != wantB {
-			t.Errorf("col[%d]: got %v,%v,%v want %d,%d,%d", slot, ch[0], ch[1], ch[2], wantR, wantG, wantB)
-		}
-	}
-	checkSlot(0, 255, 10, 20)
-	checkSlot(1, 5, 6, 250)
-	checkSlot(2, 0, 0, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -320,7 +310,7 @@ func TestPushIfChangedGradientDedupes(t *testing.T) {
 
 	tracker := &pushTracker{}
 	src := &BgColorSource{}
-	opts := pushOpts{bgGradient: true, gradientFX: defaultGradientEffectID}
+	opts := pushOpts{bgGradient: true, gradientLEDs: 4}
 	pushIfChanged(src, tracker, "ignored", 255, 1.0, opts)
 	pushIfChanged(src, tracker, "ignored", 255, 1.0, opts)
 	if sent != 1 {
@@ -608,8 +598,8 @@ func TestValidateCliGradientRequiresBg(t *testing.T) {
 
 func TestParseArgsGradientFromConfig(t *testing.T) {
 	opts, err := parseArgs([]string{}, map[string]string{
-		"gradient":    "true",
-		"gradient_fx": "46",
+		"gradient":      "true",
+		"gradient_leds": "120",
 	}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
@@ -617,7 +607,7 @@ func TestParseArgsGradientFromConfig(t *testing.T) {
 	if !opts.bgGradient {
 		t.Fatal("expected bgGradient from config")
 	}
-	if opts.gradientFX != 46 {
-		t.Fatalf("gradientFX: got %d want 46", opts.gradientFX)
+	if opts.gradientLEDs != 120 {
+		t.Fatalf("gradientLEDs: got %d want 120", opts.gradientLEDs)
 	}
 }

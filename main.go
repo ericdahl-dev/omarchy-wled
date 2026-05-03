@@ -277,8 +277,8 @@ func hsvToRGB(h, s, v float64) [3]uint8 {
 // When empty (the default), sendColorToWLED constructs the real WLED URL.
 var wledURLOverride string
 
-// defaultGradientEffectID is WLED's stock “Gradient” mode (FX_MODE_GRADIENT).
-const defaultGradientEffectID = 46
+// maxGradientLEDChunk is the most colors WLED recommends per /json/state POST for seg.i.
+const maxGradientLEDChunk = 256
 
 // sendColorToWLED pushes a solid color to a WLED device via its JSON API.
 func sendColorToWLED(ip string, rgb [3]uint8, brightness int) error {
@@ -314,46 +314,141 @@ func sendColorToWLED(ip string, rgb [3]uint8, brightness int) error {
 	return nil
 }
 
-// sendGradientToWLED applies the Gradient effect with two color stops. sx=0 sets
-// minimum effect speed so the sweep stays visually static on typical WLED builds.
-func sendGradientToWLED(ip string, left, right [3]uint8, brightness, effectID int) error {
-	url := wledURLOverride
-	if url == "" {
-		url = "http://" + ip + "/json/state"
+// wledJSONURL builds http(s)://host/json/<name> honoring wledURLOverride in tests.
+func wledJSONURL(ip string, name string) string {
+	if wledURLOverride != "" {
+		base := strings.TrimSuffix(wledURLOverride, "/json/state")
+		return base + "/json/" + name
 	}
-	payload, err := json.Marshal(map[string]any{
-		"on":  true,
-		"bri": max(0, min(255, brightness)),
-		"seg": []map[string]any{
-			{
-				"fx": effectID,
-				"sx": 0,
-				"ix": 128,
-				"col": [][]int{
-					{int(left[0]), int(left[1]), int(left[2])},
-					{int(right[0]), int(right[1]), int(right[2])},
-					{0, 0, 0},
-				},
-			},
-		},
-	})
-	if err != nil {
-		return err
-	}
+	return "http://" + ip + "/json/" + name
+}
+
+var (
+	cachedGradientLEDCount    int
+	cachedGradientLEDCountFor string
+)
+
+// fetchWLEDLEDCount reads GET /json/info and returns leds.count.
+func fetchWLEDLEDCount(ip string) (int, error) {
+	url := wledJSONURL(ip, "info")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusMultiStatus {
-		return fmt.Errorf("WLED returned HTTP %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("WLED /json/info returned HTTP %d", resp.StatusCode)
+	}
+	var info struct {
+		Leds struct {
+			Count int `json:"count"`
+		} `json:"leds"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return 0, err
+	}
+	if info.Leds.Count <= 0 {
+		return 0, fmt.Errorf("WLED reported invalid LED count")
+	}
+	return info.Leds.Count, nil
+}
+
+func resolveGradientLEDCount(ip string, configured int) (int, error) {
+	if configured > 0 {
+		return configured, nil
+	}
+	if cachedGradientLEDCount > 0 && cachedGradientLEDCountFor == ip {
+		return cachedGradientLEDCount, nil
+	}
+	n, err := fetchWLEDLEDCount(ip)
+	if err != nil {
+		return 0, err
+	}
+	cachedGradientLEDCount = n
+	cachedGradientLEDCountFor = ip
+	return n, nil
+}
+
+func rgbToHex(r, g, b uint8) string {
+	return fmt.Sprintf("%02X%02X%02X", r, g, b)
+}
+
+func lerpChannel(a, b uint8, t float64) uint8 {
+	return uint8(math.Round(float64(a) + t*(float64(b)-float64(a))))
+}
+
+// gradientHexRow is one RRGGBB per LED: linear ramp left→right in sRGB (matches strip layout).
+func gradientHexRow(left, right [3]uint8, n int) []string {
+	if n <= 0 {
+		return nil
+	}
+	if n == 1 {
+		return []string{rgbToHex(left[0], left[1], left[2])}
+	}
+	out := make([]string, n)
+	for i := 0; i < n; i++ {
+		t := float64(i) / float64(n-1)
+		out[i] = rgbToHex(
+			lerpChannel(left[0], right[0], t),
+			lerpChannel(left[1], right[1], t),
+			lerpChannel(left[2], right[2], t),
+		)
+	}
+	return out
+}
+
+// sendSpatialGradientToWLED paints a true left→right fade using seg[].i (not the Gradient FX,
+// which blends colors with its own palette/sweep semantics).
+func sendSpatialGradientToWLED(ip string, left, right [3]uint8, brightness, ledCount int) error {
+	if ledCount <= 0 {
+		return fmt.Errorf("LED count must be positive")
+	}
+	hexes := gradientHexRow(left, right, ledCount)
+	url := wledJSONURL(ip, "state")
+	bri := max(0, min(255, brightness))
+
+	for offset := 0; offset < len(hexes); offset += maxGradientLEDChunk {
+		end := min(offset+maxGradientLEDChunk, len(hexes))
+		chunk := hexes[offset:end]
+		var iArr []any
+		if offset > 0 {
+			iArr = append(iArr, offset)
+		}
+		for _, h := range chunk {
+			iArr = append(iArr, h)
+		}
+		payload, err := json.Marshal(map[string]any{
+			"on":  true,
+			"bri": bri,
+			"seg": []map[string]any{
+				{"i": iArr},
+			},
+		})
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			cancel()
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		cancel()
+		if err != nil {
+			return err
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusMultiStatus {
+			return fmt.Errorf("WLED returned HTTP %d", resp.StatusCode)
+		}
 	}
 	return nil
 }
@@ -450,14 +545,20 @@ func makeSource(sourceName string) ColorSource {
 
 // pushOpts carries WLED push behavior that is not part of ColorSource.
 type pushOpts struct {
-	bgGradient bool
-	gradientFX int
+	bgGradient   bool
+	gradientLEDs int // 0 = GET /json/info for strip length (spatial fade only)
+}
+
+// gradientSent records last gradient push for deduplication (includes LED count).
+type gradientSent struct {
+	pair [2][3]uint8
+	leds int
 }
 
 // pushTracker remembers the last solid or gradient push so we skip duplicate POSTs.
 type pushTracker struct {
 	lastSolid    *[3]uint8
-	lastGradient *[2][3]uint8
+	lastGradient *gradientSent
 }
 
 func (t *pushTracker) shouldSendSolid(rgb [3]uint8) bool {
@@ -476,19 +577,18 @@ func (t *pushTracker) markSolid(rgb [3]uint8) {
 	t.lastGradient = nil
 }
 
-func (t *pushTracker) shouldSendGradient(pair [2][3]uint8) bool {
+func (t *pushTracker) shouldSendGradient(pair [2][3]uint8, leds int) bool {
 	if t.lastSolid != nil {
 		return true
 	}
 	if t.lastGradient == nil {
 		return true
 	}
-	return *t.lastGradient != pair
+	return t.lastGradient.pair != pair || t.lastGradient.leds != leds
 }
 
-func (t *pushTracker) markGradient(pair [2][3]uint8) {
-	p := pair
-	t.lastGradient = &p
+func (t *pushTracker) markGradient(pair [2][3]uint8, leds int) {
+	t.lastGradient = &gradientSent{pair: pair, leds: leds}
 	t.lastSolid = nil
 }
 
@@ -507,17 +607,21 @@ func pushIfChanged(src ColorSource, tracker *pushTracker, wledIP string, brightn
 		left = applySaturation(left, saturation)
 		right = applySaturation(right, saturation)
 		pair := [2][3]uint8{left, right}
-		if !tracker.shouldSendGradient(pair) {
-			return
-		}
-		fx := opts.gradientFX
-		tracker.markGradient(pair)
-		if err := sendGradientToWLED(wledIP, left, right, brightness, fx); err != nil {
+		n, err := resolveGradientLEDCount(wledIP, opts.gradientLEDs)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return
 		}
-		fmt.Printf("Updated WLED → gradient rgb%v→%v bri=%d sat=%.2f fx=%d\n",
-			left, right, brightness, saturation, fx)
+		if !tracker.shouldSendGradient(pair, n) {
+			return
+		}
+		tracker.markGradient(pair, n)
+		if err := sendSpatialGradientToWLED(wledIP, left, right, brightness, n); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return
+		}
+		fmt.Printf("Updated WLED → gradient rgb%v→%v bri=%d sat=%.2f leds=%d\n",
+			left, right, brightness, saturation, n)
 		return
 	}
 
@@ -642,8 +746,8 @@ type cliOpts struct {
 	once              bool
 	showVersion       bool
 	wledIP            string
-	bgGradient        bool
-	gradientFX        int
+	bgGradient     bool
+	gradientLEDs   int
 }
 
 // parseArgs parses argv using the same defaults as loadConfig merge rules.
@@ -668,10 +772,10 @@ func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts
 	if v, ok := cfg["gradient"]; ok && parseTomlBool(v) {
 		defaultGradient = true
 	}
-	defaultGradientFX := defaultGradientEffectID
-	if v, ok := cfg["gradient_fx"]; ok {
+	defaultGradientLEDs := 0
+	if v, ok := cfg["gradient_leds"]; ok {
 		if n, err := strconv.Atoi(v); err == nil {
-			defaultGradientFX = n
+			defaultGradientLEDs = n
 		}
 	}
 
@@ -690,9 +794,9 @@ func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts
 		"Saturation multiplier (0.0=greyscale, 1.0=unchanged, >1.0=boost;\n"+
 			"default 1.2 for accent, 1.0 for fg/bg)")
 	gradient := fs.Bool("gradient", defaultGradient,
-		"Wallpaper left/right color stops + WLED Gradient effect (requires -source bg)")
-	gradientFX := fs.Int("gradient-fx", defaultGradientFX,
-		"WLED JSON effect id for Gradient (stock WLED uses 46; override if your firmware differs)")
+		"Wallpaper left/right averages as strip endpoints (spatial fade via seg.i; requires -source bg)")
+	gradientLEDs := fs.Int("gradient-leds", defaultGradientLEDs,
+		"LED count for spatial fade (0 = fetch from WLED /json/info)")
 	once := fs.Bool("once", false, "Send current color once and exit (no watching)")
 	fs.Usage = func() {
 		fmt.Fprintf(output, "Usage: omarchy-wled [options] [WLED_IP]\n\nOptions:\n")
@@ -709,7 +813,7 @@ func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts
 	opts.saturationOrUnset = *saturationFlag
 	opts.once = *once
 	opts.bgGradient = *gradient
-	opts.gradientFX = *gradientFX
+	opts.gradientLEDs = *gradientLEDs
 
 	opts.wledIP = cfg["ip"]
 	if fs.NArg() > 0 {
@@ -765,7 +869,7 @@ func main() {
 	}
 
 	src := makeSource(opts.sourceName)
-	pushOpts := pushOpts{bgGradient: opts.bgGradient, gradientFX: opts.gradientFX}
+	pushOpts := pushOpts{bgGradient: opts.bgGradient, gradientLEDs: opts.gradientLEDs}
 
 	if opts.once {
 		tracker := &pushTracker{}
