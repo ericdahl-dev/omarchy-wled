@@ -20,13 +20,14 @@ func NamedHexFromColorsToml(tomlKey, colorsTomlPath string) ([3]uint8, error) {
 		return [3]uint8{}, err
 	}
 	for _, m := range hexAssignmentInColorsToml.FindAllStringSubmatch(string(data), -1) {
-		if m[1] == tomlKey {
-			hex := m[2]
-			r, _ := strconv.ParseUint(hex[0:2], 16, 8)
-			g, _ := strconv.ParseUint(hex[2:4], 16, 8)
-			b, _ := strconv.ParseUint(hex[4:6], 16, 8)
-			return [3]uint8{uint8(r), uint8(g), uint8(b)}, nil
+		key, hex := m[1], m[2]
+		if key != tomlKey {
+			continue
 		}
+		r, _ := strconv.ParseUint(hex[0:2], 16, 8)
+		g, _ := strconv.ParseUint(hex[2:4], 16, 8)
+		b, _ := strconv.ParseUint(hex[4:6], 16, 8)
+		return [3]uint8{uint8(r), uint8(g), uint8(b)}, nil
 	}
 	return [3]uint8{}, fmt.Errorf("%s color not found in %s", tomlKey, colorsTomlPath)
 }

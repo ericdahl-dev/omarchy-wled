@@ -28,7 +28,7 @@ func TestMain(m *testing.M) {
 }
 
 // ---------------------------------------------------------------------------
-// readColorKey
+// NamedHexFromColorsToml
 // ---------------------------------------------------------------------------
 
 const validColorsToml = `accent = "#82FB9C"
@@ -86,7 +86,7 @@ func TestReadColorKeyMissingForeground(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// applySaturation
+// ScaleSaturation
 // ---------------------------------------------------------------------------
 
 func TestApplySaturationFullPreservesColor(t *testing.T) {
@@ -139,7 +139,7 @@ func TestApplySaturationBoostIncreasesVividness(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// sendColorToWLED — using a mock HTTP server
+// wled.PostSolidJSON / PostSpatialGradientJSON (httptest)
 // ---------------------------------------------------------------------------
 
 func wledServer(t *testing.T, statusCode int) (*httptest.Server, func() []byte) {
@@ -236,7 +236,7 @@ func TestSendSpatialGradientToWLEDPostsPerLEDHex(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// pushIfChanged
+// daemon.PushCurrentColorIfChanged, PollTick
 // ---------------------------------------------------------------------------
 
 type fixedColorSource struct {
@@ -394,7 +394,7 @@ func TestPollTickSkipsSendWhenStateMatchesRead(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// readBgColor
+// wallpaper (AverageSRGBFromFile, ColumnStripForLEDCount, …)
 // ---------------------------------------------------------------------------
 
 func TestReadBgColorAveragesLinear(t *testing.T) {
@@ -541,7 +541,7 @@ func TestReadBgColorStripLinearAvgBrighterThanNaive(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// makeSource / ColorSource.IsTrigger
+// source.FromFlag, Source.IsTrigger
 // ---------------------------------------------------------------------------
 
 func TestMakeSourceAccent(t *testing.T) {
