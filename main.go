@@ -8,11 +8,13 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/ericdahl-dev/omarchy-wled/internal/config"
 	"github.com/ericdahl-dev/omarchy-wled/internal/daemon"
 	"github.com/ericdahl-dev/omarchy-wled/internal/paths"
 	"github.com/ericdahl-dev/omarchy-wled/internal/source"
+	"github.com/ericdahl-dev/omarchy-wled/internal/wallpaper"
 )
 
 // version is set at link time: go build -ldflags "-X main.version=v1.2.3"
@@ -29,6 +31,8 @@ type cliOpts struct {
 	wledIP            string
 	bgGradient        bool
 	gradientLEDs      int
+	gradientSample    string // average | row
+	gradientRow       int    // 0–100 when row mode
 }
 
 // parseArgs parses argv using the same defaults as loadConfig merge rules.
@@ -59,6 +63,16 @@ func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts
 			defaultGradientLEDs = n
 		}
 	}
+	defaultGradientSample := cfg["gradient_sample"]
+	if defaultGradientSample == "" {
+		defaultGradientSample = "average"
+	}
+	defaultGradientRow := 50
+	if v, ok := cfg["gradient_row"]; ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			defaultGradientRow = n
+		}
+	}
 
 	fs := flag.NewFlagSet("omarchy-wled", flag.ContinueOnError)
 	fs.SetOutput(output)
@@ -75,9 +89,13 @@ func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts
 		"Saturation multiplier (0.0=greyscale, 1.0=unchanged, >1.0=boost;\n"+
 			"default 1.2 for accent, 1.0 for fg/bg)")
 	gradient := fs.Bool("gradient", defaultGradient,
-		"Wallpaper left/right averages as strip endpoints (spatial fade via seg.i; requires -source bg)")
+		"Wallpaper per-column strip (spatial fade via seg.i; requires -source bg; see -gradient-sample)")
 	gradientLEDs := fs.Int("gradient-leds", defaultGradientLEDs,
 		"LED count for spatial fade (0 = fetch from WLED /json/info)")
+	gradientSample := fs.String("gradient-sample", defaultGradientSample,
+		"Wallpaper gradient sampling: average (full-height column avg) or row (single scanline)")
+	gradientRow := fs.Int("gradient-row", defaultGradientRow,
+		"With gradient-sample=row: vertical position 0–100 (0=top, 100=bottom)")
 	once := fs.Bool("once", false, "Send current color once and exit (no watching)")
 	fs.Usage = func() {
 		fmt.Fprintf(output, "Usage: omarchy-wled [options] [WLED_IP]\n")
@@ -96,6 +114,8 @@ func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts
 	opts.once = *once
 	opts.bgGradient = *gradient
 	opts.gradientLEDs = *gradientLEDs
+	opts.gradientSample = *gradientSample
+	opts.gradientRow = *gradientRow
 
 	opts.wledIP = cfg["ip"]
 	if fs.NArg() > 0 {
@@ -107,6 +127,14 @@ func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts
 func validateCli(opts *cliOpts) error {
 	if opts.bgGradient && opts.sourceName != "bg" {
 		return fmt.Errorf("-gradient requires -source bg")
+	}
+	switch strings.TrimSpace(strings.ToLower(opts.gradientSample)) {
+	case "", "average", "row":
+	default:
+		return fmt.Errorf("-gradient-sample must be average or row — got %q", opts.gradientSample)
+	}
+	if opts.gradientRow < 0 || opts.gradientRow > 100 {
+		return fmt.Errorf("-gradient-row must be 0–100 — got %d", opts.gradientRow)
 	}
 	return nil
 }
@@ -161,6 +189,8 @@ func main() {
 	pushOpts := daemon.PushOptions{
 		WallpaperGradientStrip: opts.bgGradient,
 		GradientLEDCountOrZero: opts.gradientLEDs,
+		GradientSample:         wallpaper.GradientSampleKindFromString(opts.gradientSample),
+		GradientRowPercent:     opts.gradientRow,
 	}
 
 	if opts.once {

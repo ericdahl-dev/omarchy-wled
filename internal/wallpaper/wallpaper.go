@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ericdahl-dev/omarchy-wled/internal/paths"
 	xdraw "golang.org/x/image/draw"
@@ -131,6 +132,26 @@ func LeftRightHalvesLinearAvg(wallpaperSymlinkPath string) (left, right [3]uint8
 	return left, right, err
 }
 
+// GradientSampleKind selects how each column is reduced before LED resampling.
+type GradientSampleKind byte
+
+const (
+	// GradientSampleAverage averages each column vertically over the full image (legacy behavior).
+	GradientSampleAverage GradientSampleKind = iota
+	// GradientSampleRow uses a single horizontal scanline (see RowYFromPercent).
+	GradientSampleRow
+)
+
+// GradientSampleKindFromString parses config/CLI values; unknown → average.
+func GradientSampleKindFromString(s string) GradientSampleKind {
+	switch strings.TrimSpace(strings.ToLower(s)) {
+	case "row":
+		return GradientSampleRow
+	default:
+		return GradientSampleAverage
+	}
+}
+
 func columnAverageRow(rgbaFull *image.RGBA) *image.RGBA {
 	b := rgbaFull.Bounds()
 	w, h := b.Dx(), b.Dy()
@@ -157,8 +178,43 @@ func columnAverageRow(rgbaFull *image.RGBA) *image.RGBA {
 	return out
 }
 
+// RowYFromPercent maps rowPercent in [0,100] to a row index in [0, height-1] (0=top, 100=bottom).
+func RowYFromPercent(height, rowPercent int) int {
+	if height <= 1 {
+		return 0
+	}
+	if rowPercent < 0 {
+		rowPercent = 0
+	}
+	if rowPercent > 100 {
+		rowPercent = 100
+	}
+	return int(math.Round(float64(rowPercent) / 100.0 * float64(height-1)))
+}
+
+func horizontalScanlineRGBA(rgbaFull *image.RGBA, rowIndex int) *image.RGBA {
+	b := rgbaFull.Bounds()
+	w, h := b.Dx(), b.Dy()
+	out := image.NewRGBA(image.Rect(0, 0, w, 1))
+	if w <= 0 || h <= 0 {
+		return out
+	}
+	if rowIndex < 0 {
+		rowIndex = 0
+	}
+	if rowIndex >= h {
+		rowIndex = h - 1
+	}
+	y := b.Min.Y + rowIndex
+	for x := 0; x < w; x++ {
+		out.Set(x, 0, rgbaFull.RGBAAt(b.Min.X+x, y))
+	}
+	return out
+}
+
 // ColumnStripForLEDCount builds one sample per wallpaper column, then resamples to ledCount LEDs.
-func ColumnStripForLEDCount(wallpaperSymlinkPath string, ledCount int) ([][3]uint8, error) {
+// kind selects full-height column average vs a single row; rowPercent is used only for GradientSampleRow.
+func ColumnStripForLEDCount(wallpaperSymlinkPath string, ledCount int, kind GradientSampleKind, rowPercent int) ([][3]uint8, error) {
 	if ledCount <= 0 {
 		return nil, fmt.Errorf("ledCount must be positive")
 	}
@@ -181,7 +237,17 @@ func ColumnStripForLEDCount(wallpaperSymlinkPath string, ledCount int) ([][3]uin
 	}
 	rgbaFull := image.NewRGBA(bounds)
 	draw.Draw(rgbaFull, bounds, decoded, bounds.Min, draw.Src)
-	rowRgba := columnAverageRow(rgbaFull)
+
+	var rowRgba *image.RGBA
+	switch kind {
+	case GradientSampleAverage:
+		rowRgba = columnAverageRow(rgbaFull)
+	case GradientSampleRow:
+		y := RowYFromPercent(bounds.Dy(), rowPercent)
+		rowRgba = horizontalScanlineRGBA(rgbaFull, y)
+	default:
+		return nil, fmt.Errorf("unsupported gradient sample kind")
+	}
 
 	pix := rowRgba.Pix
 	for i := 0; i < len(pix); i += 4 {

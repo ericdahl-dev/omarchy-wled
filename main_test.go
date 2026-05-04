@@ -460,7 +460,7 @@ func TestWallpaperColumnAverageMapsToLEDs(t *testing.T) {
 	if err := os.Symlink(imgPath, link); err != nil {
 		t.Fatal(err)
 	}
-	colors, err := wallpaper.ColumnStripForLEDCount(link, 3)
+	colors, err := wallpaper.ColumnStripForLEDCount(link, 3, wallpaper.GradientSampleAverage, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,6 +472,43 @@ func TestWallpaperColumnAverageMapsToLEDs(t *testing.T) {
 	}
 	if colors[2][2] <= colors[2][0] {
 		t.Errorf("last LED should read bluer than red: %v", colors[2])
+	}
+}
+
+func TestWallpaperGradientScanlineDiffersByRow(t *testing.T) {
+	dir := t.TempDir()
+	img := image.NewRGBA(image.Rect(0, 0, 3, 2))
+	for x := 0; x < 3; x++ {
+		img.Set(x, 0, imgcolor.RGBA{R: uint8(50 + x*80), A: 255})
+		img.Set(x, 1, imgcolor.RGBA{B: uint8(50 + x*80), A: 255})
+	}
+	imgPath := filepath.Join(dir, "rows.png")
+	f, err := os.Create(imgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	f.Close()
+	link := filepath.Join(dir, "background")
+	if err := os.Symlink(imgPath, link); err != nil {
+		t.Fatal(err)
+	}
+	top, err := wallpaper.ColumnStripForLEDCount(link, 3, wallpaper.GradientSampleRow, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bot, err := wallpaper.ColumnStripForLEDCount(link, 3, wallpaper.GradientSampleRow, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if top[0][0] <= top[0][2] {
+		t.Errorf("top scanline strip should be red-heavy at left: %v", top[0])
+	}
+	if bot[0][2] <= bot[0][0] {
+		t.Errorf("bottom scanline strip should be blue-heavy at left: %v", bot[0])
 	}
 }
 
@@ -656,8 +693,10 @@ func TestValidateCliGradientRequiresBg(t *testing.T) {
 
 func TestParseArgsGradientFromConfig(t *testing.T) {
 	opts, err := parseArgs([]string{}, map[string]string{
-		"gradient":      "true",
-		"gradient_leds": "120",
+		"gradient":         "true",
+		"gradient_leds":    "120",
+		"gradient_sample":  "row",
+		"gradient_row":     "33",
 	}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
@@ -667,5 +706,20 @@ func TestParseArgsGradientFromConfig(t *testing.T) {
 	}
 	if opts.gradientLEDs != 120 {
 		t.Fatalf("gradientLEDs: got %d want 120", opts.gradientLEDs)
+	}
+	if opts.gradientSample != "row" {
+		t.Fatalf("gradientSample: got %q want row", opts.gradientSample)
+	}
+	if opts.gradientRow != 33 {
+		t.Fatalf("gradientRow: got %d want 33", opts.gradientRow)
+	}
+}
+
+func TestValidateCliGradientSampleAndRow(t *testing.T) {
+	if err := validateCli(&cliOpts{gradientSample: "bogus"}); err == nil {
+		t.Fatal("expected error for bad gradient-sample")
+	}
+	if err := validateCli(&cliOpts{gradientSample: "average", gradientRow: 101}); err == nil {
+		t.Fatal("expected error for gradient-row > 100")
 	}
 }

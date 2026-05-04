@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ericdahl-dev/omarchy-wled/internal/source"
+	"github.com/ericdahl-dev/omarchy-wled/internal/wallpaper"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -14,6 +15,8 @@ import (
 type PushOptions struct {
 	WallpaperGradientStrip bool
 	GradientLEDCountOrZero int // 0 → query WLED /json/info
+	GradientSample         wallpaper.GradientSampleKind
+	GradientRowPercent     int // 0–100 when GradientSampleRow
 }
 
 type gradientStripSnapshot struct {

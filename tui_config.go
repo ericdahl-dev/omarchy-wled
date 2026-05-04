@@ -12,6 +12,7 @@ import (
 	"github.com/ericdahl-dev/omarchy-wled/internal/config"
 	"github.com/ericdahl-dev/omarchy-wled/internal/daemon"
 	"github.com/ericdahl-dev/omarchy-wled/internal/source"
+	"github.com/ericdahl-dev/omarchy-wled/internal/wallpaper"
 	"github.com/ericdahl-dev/omarchy-wled/internal/wled"
 )
 
@@ -21,8 +22,18 @@ type tuiConfig struct {
 	Source       string
 	Brightness   int
 	Saturation   float64
-	Gradient     bool // wallpaper column strip (requires source bg)
-	GradientLEDs int  // 0 = fetch LED count from WLED /json/info
+	Gradient         bool   // wallpaper column strip (requires source bg)
+	GradientLEDs     int    // 0 = fetch LED count from WLED /json/info
+	GradientSample   string // average | row (full-height column avg vs scanline)
+	GradientRow      int    // 0–100 when GradientSample is row
+}
+
+func normalizeGradientSample(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "row" {
+		return "row"
+	}
+	return "average"
 }
 
 const (
@@ -61,6 +72,15 @@ func (c *tuiConfig) Validate() error {
 	}
 	if c.GradientLEDs < 0 {
 		return fmt.Errorf("gradient_leds must be >= 0 — got %d", c.GradientLEDs)
+	}
+	g := strings.TrimSpace(strings.ToLower(c.GradientSample))
+	switch g {
+	case "", "average", "row":
+	default:
+		return fmt.Errorf("gradient_sample must be average or row — got %q", c.GradientSample)
+	}
+	if c.GradientRow < 0 || c.GradientRow > 100 {
+		return fmt.Errorf("gradient_row must be 0–100 — got %d", c.GradientRow)
 	}
 	return nil
 }
@@ -128,17 +148,29 @@ func loadTuiConfig(path string) (*tuiConfig, error) {
 			gradLEDs = n
 		}
 	}
+	gradSample := "average"
+	if v, ok := m["gradient_sample"]; ok && strings.TrimSpace(v) != "" {
+		gradSample = normalizeGradientSample(v)
+	}
+	gradRow := 50
+	if v, ok := m["gradient_row"]; ok {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			gradRow = n
+		}
+	}
 	nsrc := normalizeSource(src)
 	if nsrc != "bg" {
 		grad = false
 	}
 	return &tuiConfig{
-		IP:           ip,
-		Source:       nsrc,
-		Brightness:   bri,
-		Saturation:   sat,
-		Gradient:     grad,
-		GradientLEDs: gradLEDs,
+		IP:             ip,
+		Source:         nsrc,
+		Brightness:     bri,
+		Saturation:     sat,
+		Gradient:       grad,
+		GradientLEDs:   gradLEDs,
+		GradientSample: gradSample,
+		GradientRow:    gradRow,
 	}, nil
 }
 
@@ -149,6 +181,7 @@ func saveTuiConfig(path string, c *tuiConfig) error {
 	}
 	src := normalizeSource(c.Source)
 	grad := c.Gradient && src == "bg"
+	gs := normalizeGradientSample(c.GradientSample)
 	content := fmt.Sprintf(
 		`ip = "%s"
 source = "%s"
@@ -156,8 +189,10 @@ brightness = %d
 saturation = %g
 gradient = %t
 gradient_leds = %d
+gradient_sample = "%s"
+gradient_row = %d
 `,
-		c.IP, src, c.Brightness, c.Saturation, grad, c.GradientLEDs,
+		c.IP, src, c.Brightness, c.Saturation, grad, c.GradientLEDs, gs, c.GradientRow,
 	)
 	return os.WriteFile(path, []byte(content), 0o644)
 }
@@ -169,6 +204,8 @@ func previewPushTUI(cfg *tuiConfig, tracker *daemon.DedupeTracker) error {
 	opts := daemon.PushOptions{
 		WallpaperGradientStrip: cfg.Gradient && normalizeSource(cfg.Source) == "bg",
 		GradientLEDCountOrZero: cfg.GradientLEDs,
+		GradientSample:         wallpaper.GradientSampleKindFromString(cfg.GradientSample),
+		GradientRowPercent:     cfg.GradientRow,
 	}
 	prep, skip, err := daemon.PreparePushColors(src, cfg.IP, cfg.Saturation, opts, true, true)
 	if err != nil {
