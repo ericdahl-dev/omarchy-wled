@@ -1,16 +1,22 @@
 # ADR-0002: watchdog and Pillow are optional dependencies
 
 **Date:** 2026-05-01  
-**Status:** Accepted
+**Status:** Superseded (historical)
 
-## Decision
+## Original decision (Python)
 
-`watchdog` and `Pillow` are declared as `[project.optional-dependencies]`, not hard deps. The code catches `ImportError` at runtime and falls back gracefully (poll loop for watchdog; `RuntimeError` with install hint for Pillow).
+`watchdog` and `Pillow` were declared as `[project.optional-dependencies]`, not hard deps.
 
-## Reason
+## Current state
 
-The most common use case (`--source accent` or `--source fg`) needs neither library. Forcing them on all users bloats the install. The AUR PKGBUILD still lists both in `depends` since AUR users expect a batteries-included package.
+There is **no Python package** in this repository. Filesystem watching uses
+`github.com/fsnotify/fsnotify` (compiled in). Wallpaper decoding uses Go's `image`
+packages and `golang.org/x/image` where needed.
+
+## Reason (historical)
+
+Optional deps avoided bloating installs for accent/fg-only users.
 
 ## Consequences
 
-Users installing via `pip` need `pip install "omarchy-wled[watch]"` for filesystem watching, or `pip install "omarchy-wled[bg]"` for wallpaper color. `pip install "omarchy-wled[all]"` gets everything.
+N/A for current codebase; retained for audit trail only.

@@ -436,8 +436,7 @@ func TestReadBgColorAveragesLinear(t *testing.T) {
 	}
 }
 
-// Like test_omarchy_wled.test_read_bg_color_linear_avg_brighter_than_naive on main:
-// half red / half black — linear-spot average should be well above naive 127.
+// Half red / half black wallpaper — linear-spot average should be well above naive 127.
 func TestWallpaperColumnAverageMapsToLEDs(t *testing.T) {
 	dir := t.TempDir()
 	// 3×2: three columns (R / G / B); two rows duplicate — column averages stay pure primaries.

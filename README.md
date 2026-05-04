@@ -64,7 +64,7 @@ omarchy-wled 192.168.1.50 -once
 ## Configuration
 
 Settings can be saved to `~/.config/omarchy-wled/config.toml` so you don't need
-to pass flags every time (e.g. after setting up via `omarchy-wled-tui`):
+to pass flags every time (e.g. after setting up via `omarchy-wled tui`):
 
 ```toml
 ip = "192.168.1.50"
@@ -88,11 +88,8 @@ To pass extra flags (e.g. `-source bg -brightness 200`), edit the service file's
 
 ## TUI configurator
 
-A graphical configurator (`omarchy-wled-tui`) is available as a separate Python
-tool in this repository. Install it with:
+Interactive configuration (and optional systemd user autostart) via Bubble Tea:
 
 ```bash
-pip install ".[tui]"
-# or
-uv tool install ".[tui]"
+omarchy-wled tui
 ```

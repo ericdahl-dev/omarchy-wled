@@ -2,23 +2,21 @@
 
 ## Project overview
 
-Single-file Python tool that watches Omarchy theme/wallpaper changes and syncs color to a WLED LED device. See `CONTEXT.md` for domain glossary.
+Go CLI/daemon that watches Omarchy theme/wallpaper changes and syncs color to a WLED device. Interactive setup via `omarchy-wled tui`. See `CONTEXT.md` for domain glossary.
 
 ## Commands
 
 ```bash
 # Run tests
-python -m pytest test_omarchy_wled.py test_omarchy_wled_tui.py -q
-
-# Install for dev (with all optional deps)
-pip install -e ".[all]"
+go test ./...
 
 # Lint (none configured — match existing style)
+go vet ./...
 ```
 
 ## Release flow
 
-1. Bump `pkgver` in `PKGBUILD` and `version` in `pyproject.toml`
+1. Bump `pkgver` in `PKGBUILD` (and `pkgrel` if needed)
 2. Commit, push branch, open PR
 3. Merge when CI green
 4. `git tag vX.Y.Z && git push origin vX.Y.Z`
@@ -26,18 +24,11 @@ pip install -e ".[all]"
 
 ## Architecture notes
 
-- Go CLI/daemon uses `internal/*` packages (`source`, `daemon`, `wled`, `wallpaper`, ...); `main.go` is thin wiring
-- Core logic lives in `omarchy_wled.py` — keep it single-file
-- TUI lives in `omarchy_wled_tui.py` (Textual app) — intentional exception to the single-file rule
-- `ColorSource` protocol: `read()`, `watch_path()`, `is_trigger()` — the seam for new sources
-- `sentinel()` is **not** on the protocol; it's a poll-fallback concern passed directly to `_poll()`
-- `watchdog` and `Pillow` are optional deps — code catches `ImportError` at runtime
+- Go CLI/daemon uses `internal/*` packages (`source`, `daemon`, `wled`, `wallpaper`, …); `main.go` is thin wiring
+- `source.Source` interface: `Read()`, `WatchDir()`, `IsTrigger()`, `Sentinel()`
+- Poll fallback compares `Sentinel()` strings when fsnotify is unavailable (`internal/daemon`)
 - Accent source defaults to 1.2× saturation; fg/bg default to 1.0×
 - See `docs/adr/` for recorded decisions
-
-## Open issues (as of 0.1.3)
-
-All architectural issues from the initial audit have been resolved. No known open bugs.
 
 ## Key files
 
@@ -48,16 +39,13 @@ All architectural issues from the initial audit have been resolved. No known ope
 | `internal/daemon` | Push dedupe, fsnotify watch, poll fallback |
 | `internal/wallpaper` | Wallpaper decode, γ pipeline, column→LED strip |
 | `internal/wled` | WLED HTTP (solid, spatial `seg.i`, LED count) |
-| `main_test.go` | Go test suite |
-| `omarchy_wled.py` | Python core (TUI / optional pip install) |
-| `omarchy_wled_tui.py` | Textual TUI (`omarchy-wled-tui` entry point) |
-| `test_omarchy_wled.py` | pytest suite (core) |
-| `test_omarchy_wled_tui.py` | pytest suite (TUI) |
+| `tui.go` | Bubble Tea TUI (`omarchy-wled tui`) |
+| `tui_config.go` | TUI config load/save, systemd helpers, preview push |
+| `main_test.go`, `tui_config_test.go` | Go tests |
 | `PKGBUILD` | AUR package |
-| `pyproject.toml` | Python package metadata |
 | `omarchy-wled@.service` | systemd user service template |
 | `.github/workflows/aur-release.yml` | AUR release automation |
-| `.github/workflows/ci.yml` | `go test` + pytest on push/PR |
+| `.github/workflows/ci.yml` | `go test` on push/PR |
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker

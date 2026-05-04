@@ -18,9 +18,9 @@ Sync color from an [Omarchy](https://omarchy.org) desktop environment to a [WLED
 
 **Saturation boost** — scaling the HSV saturation channel before sending. Accent defaults to 1.2×; fg/bg default to 1.0×. Overridable via `-saturation`.
 
-**Sentinel** — a value that changes when the color source changes (e.g. file mtime, symlink target). Used by the poll fallback only — not part of the `ColorSource` interface.
+**Sentinel** — a value that changes when the color source changes (e.g. file mtime, symlink target). Used by the poll fallback only — not part of the `source.Source` interface.
 
-**Poll fallback** — when `fsnotify` cannot initialise a watcher (unusual on Linux), `poll()` runs a 1-second loop checking the sentinel value instead of using filesystem events.
+**Poll fallback** — when `fsnotify` cannot initialise a watcher (unusual on Linux), the daemon runs a 1-second loop checking the sentinel value instead of using filesystem events.
 
 **Seam** — the `source.Source` interface: `Read()`, `WatchDir()`, `IsTrigger()`, `Sentinel()`. Adding a new source means implementing this interface only.
 
@@ -35,13 +35,12 @@ internal/wallpaper      — image decode, γ pipeline, column→LED strip
 internal/wled           — HTTP JSON to WLED (solid, spatial seg.i, LED count)
 internal/source         — Source interface; theme vs wallpaper implementations
 internal/daemon         — push dedupe, fsnotify watch, poll fallback
+tui.go                  — Bubble Tea TUI (`omarchy-wled tui`)
+tui_config.go           — TUI config, systemd helpers, live preview
 main_test.go            — Go test suite
-omarchy_wled.py         — Python source (used by TUI only)
-omarchy_wled_tui.py     — Textual TUI (omarchy-wled-tui entry point)
-test_omarchy_wled.py    — Python pytest suite (covers omarchy_wled.py)
+tui_config_test.go      — TUI config / systemd unit tests
 omarchy-wled@.service   — systemd user service template
 PKGBUILD                — AUR package definition (Go build)
-pyproject.toml          — Python package metadata (TUI only)
 ```
 
 ## Key Paths (runtime)
@@ -50,6 +49,5 @@ pyproject.toml          — Python package metadata (TUI only)
 ~/.config/omarchy/current/theme/colors.toml   — accent/fg/bg hex values
 ~/.config/omarchy/current/theme.name          — rewritten on theme switch (watch trigger)
 ~/.config/omarchy/current/background          — symlink to current wallpaper image
-~/.config/omarchy-wled/config.toml            — optional saved settings (ip, source, brightness, saturation)
+~/.config/omarchy-wled/config.toml            — optional saved settings (ip, source, brightness, saturation, optional gradient)
 ```
-

@@ -25,9 +25,11 @@ Rewrite `omarchy-wled` (the core CLI/daemon binary) in Go. The Go version:
 
 The PKGBUILD now has only `makedepends=('go')` and no `depends` at all.
 
-The Python TUI (`omarchy_wled_tui.py`) remains as a separate Python tool. It is
-no longer installed by the AUR package; users who want the TUI can install it
-via `pip install ".[tui]"`.
+## Update (2026-05): Python removed from the repository
+
+The legacy Python package (`omarchy_wled.py`, `omarchy_wled_tui.py`, `pyproject.toml`,
+pytest suites) has been **removed**. Configuration UI is **`omarchy-wled tui`** (Bubble Tea,
+same binary). CI runs **Go only**.
 
 ## Consequences
 
@@ -37,5 +39,3 @@ via `pip install ".[tui]"`.
   which is a minor UX change for existing users.
 - The `bg` source supports PNG and JPEG out of the box; other formats (WebP,
   GIF, …) are not decoded unless extra Go image decoders are imported.
-- The Python tests (`test_omarchy_wled.py`) continue to cover the Python source,
-  which is kept for the TUI.
