@@ -54,7 +54,8 @@ func PostSolidJSON(ip string, rgb [3]uint8, brightness int) error {
 	return nil
 }
 
-func jsonGETURL(ip string, name string) string {
+// wledJSONURL builds http://<ip>/json/<name> or derives the base from TestStatePostURL in tests.
+func wledJSONURL(ip string, name string) string {
 	if TestStatePostURL != "" {
 		base := strings.TrimSuffix(TestStatePostURL, "/json/state")
 		return base + "/json/" + name
@@ -69,7 +70,7 @@ var (
 
 // FetchLEDCountFromInfo calls GET /json/info and returns leds.count.
 func FetchLEDCountFromInfo(ip string) (int, error) {
-	url := jsonGETURL(ip, "info")
+	url := wledJSONURL(ip, "info")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -128,24 +129,25 @@ func PostSpatialGradientJSON(ip string, stripRGB [][3]uint8, brightness int) err
 	for i, rgb := range stripRGB {
 		hexes[i] = rgbToHex(rgb[0], rgb[1], rgb[2])
 	}
-	url := jsonGETURL(ip, "state")
+	url := wledJSONURL(ip, "state")
 	bri := max(0, min(255, brightness))
 
 	for offset := 0; offset < len(hexes); offset += maxGradientLEDChunk {
 		end := min(offset+maxGradientLEDChunk, len(hexes))
 		chunk := hexes[offset:end]
-		var iArr []any
+		// WLED seg.i: optional LED start offset, then one RRGGBB hex string per LED.
+		var segIndices []any
 		if offset > 0 {
-			iArr = append(iArr, offset)
+			segIndices = append(segIndices, offset)
 		}
 		for _, h := range chunk {
-			iArr = append(iArr, h)
+			segIndices = append(segIndices, h)
 		}
 		payload, err := json.Marshal(map[string]any{
 			"on":  true,
 			"bri": bri,
 			"seg": []map[string]any{
-				{"i": iArr},
+				{"i": segIndices},
 			},
 		})
 		if err != nil {

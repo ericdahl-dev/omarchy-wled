@@ -19,7 +19,7 @@ type PushOptions struct {
 	GradientLEDCountOrZero int // 0 → query WLED /json/info
 }
 
-type gradientSent struct {
+type gradientStripSnapshot struct {
 	colors [][3]uint8
 }
 
@@ -44,7 +44,7 @@ func gradientSlicesEqual(a, b [][3]uint8) bool {
 // DedupeTracker skips HTTP when the last push already matched (solid or full strip).
 type DedupeTracker struct {
 	lastSolid    *[3]uint8
-	lastGradient *gradientSent
+	lastGradient *gradientStripSnapshot
 }
 
 func (t *DedupeTracker) ShouldSendSolid(rgb [3]uint8) bool {
@@ -74,7 +74,7 @@ func (t *DedupeTracker) ShouldSendGradient(colors [][3]uint8) bool {
 }
 
 func (t *DedupeTracker) MarkGradientSent(colors [][3]uint8) {
-	t.lastGradient = &gradientSent{colors: dupGradientColors(colors)}
+	t.lastGradient = &gradientStripSnapshot{colors: dupGradientColors(colors)}
 	t.lastSolid = nil
 }
 
@@ -104,9 +104,9 @@ func PushCurrentColorIfChanged(src source.Source, tracker *DedupeTracker, wledIP
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return
 		}
-		a, z := stripRGB[0], stripRGB[len(stripRGB)-1]
+		startRGB, endRGB := stripRGB[0], stripRGB[len(stripRGB)-1]
 		fmt.Printf("Updated WLED → gradient strip rgb%v…%v bri=%d sat=%.2f leds=%d\n",
-			a, z, brightness, saturation, n)
+			startRGB, endRGB, brightness, saturation, n)
 		return
 	}
 
