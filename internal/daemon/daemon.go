@@ -6,10 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/ericdahl-dev/omarchy-wled/internal/color"
 	"github.com/ericdahl-dev/omarchy-wled/internal/source"
-	"github.com/ericdahl-dev/omarchy-wled/internal/wallpaper"
-	"github.com/ericdahl-dev/omarchy-wled/internal/wled"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -78,54 +75,6 @@ func (t *DedupeTracker) MarkGradientSent(colors [][3]uint8) {
 	t.lastSolid = nil
 }
 
-// PushCurrentColorIfChanged reads Omarchy, scales saturation, posts to WLED if different from last push.
-func PushCurrentColorIfChanged(src source.Source, tracker *DedupeTracker, wledIP string, brightness int, saturation float64, opts PushOptions) {
-	if opts.WallpaperGradientStrip {
-		if _, ok := src.(*source.WallpaperAverage); !ok {
-			return
-		}
-		n, err := wled.ResolveGradientLEDCount(wledIP, opts.GradientLEDCountOrZero)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			return
-		}
-		stripRGB, err := wallpaper.ColumnStripForLEDCount(wallpaper.CurrentSymlink(), n)
-		if err != nil {
-			return
-		}
-		for i := range stripRGB {
-			stripRGB[i] = color.ScaleSaturation(stripRGB[i], saturation)
-		}
-		if !tracker.ShouldSendGradient(stripRGB) {
-			return
-		}
-		tracker.MarkGradientSent(stripRGB)
-		if err := wled.PostSpatialGradientJSON(wledIP, stripRGB, brightness); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			return
-		}
-		startRGB, endRGB := stripRGB[0], stripRGB[len(stripRGB)-1]
-		fmt.Printf("Updated WLED → gradient strip rgb%v…%v bri=%d sat=%.2f leds=%d\n",
-			startRGB, endRGB, brightness, saturation, n)
-		return
-	}
-
-	rgb, err := src.Read()
-	if err != nil {
-		return
-	}
-	rgb = color.ScaleSaturation(rgb, saturation)
-	if !tracker.ShouldSendSolid(rgb) {
-		return
-	}
-	tracker.MarkSolidSent(rgb)
-	if err := wled.PostSolidJSON(wledIP, rgb, brightness); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return
-	}
-	fmt.Printf("Updated WLED → rgb%v bri=%d sat=%.2f\n", rgb, brightness, saturation)
-}
-
 // RunFsnotifyLoop watches src.WatchDir() and pushes after debounce when IsTrigger matches.
 func RunFsnotifyLoop(wledIP string, brightness int, saturation float64, src source.Source, opts PushOptions) error {
 	tracker := &DedupeTracker{}
@@ -176,14 +125,4 @@ func PollTick(wledIP string, brightness int, saturation float64, src source.Sour
 	*previousSentinel = currentSentinel
 	time.Sleep(200 * time.Millisecond)
 	PushCurrentColorIfChanged(src, tracker, wledIP, brightness, saturation, opts)
-}
-
-// RunSentinelPollLoop is the fsnotify fallback: compare Sentinel() once per second.
-func RunSentinelPollLoop(wledIP string, brightness int, saturation float64, src source.Source, opts PushOptions) {
-	tracker := &DedupeTracker{}
-	var previousSentinel string
-	for {
-		PollTick(wledIP, brightness, saturation, src, tracker, &previousSentinel, opts)
-		time.Sleep(time.Second)
-	}
 }

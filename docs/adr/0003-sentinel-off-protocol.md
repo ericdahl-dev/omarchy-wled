@@ -1,7 +1,7 @@
 # ADR-0003: sentinel() excluded from ColorSource protocol
 
 **Date:** 2026-05-01  
-**Status:** Accepted
+**Status:** Accepted (Python — superseded for Go by ADR-0007)
 
 ## Decision
 

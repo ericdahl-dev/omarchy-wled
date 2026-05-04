@@ -34,7 +34,7 @@ internal/config         — flat config.toml load (regex)
 internal/wallpaper      — image decode, γ pipeline, column→LED strip
 internal/wled           — HTTP JSON to WLED (solid, spatial seg.i, LED count)
 internal/source         — Source interface; theme vs wallpaper implementations
-internal/daemon         — push dedupe, fsnotify watch, poll fallback
+internal/daemon         — prepare/deliver push pipeline, dedupe, fsnotify watch, PollFallback
 tui.go                  — Bubble Tea TUI (`omarchy-wled tui`)
 tui_config.go           — TUI config, systemd helpers, live preview
 main_test.go            — Go test suite

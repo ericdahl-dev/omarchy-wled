@@ -12,7 +12,6 @@ import (
 	"github.com/ericdahl-dev/omarchy-wled/internal/config"
 	"github.com/ericdahl-dev/omarchy-wled/internal/daemon"
 	"github.com/ericdahl-dev/omarchy-wled/internal/source"
-	"github.com/ericdahl-dev/omarchy-wled/internal/wallpaper"
 	"github.com/ericdahl-dev/omarchy-wled/internal/wled"
 )
 
@@ -164,44 +163,18 @@ gradient_leds = %d
 }
 
 // previewPushTUI sends live preview to WLED (solid or wallpaper gradient), using the same
-// dedupe rules as the daemon.
+// prepare + dedupe + deliver path as the daemon.
 func previewPushTUI(cfg *tuiConfig, tracker *daemon.DedupeTracker) error {
 	src := source.FromFlag(normalizeSource(cfg.Source))
 	opts := daemon.PushOptions{
 		WallpaperGradientStrip: cfg.Gradient && normalizeSource(cfg.Source) == "bg",
 		GradientLEDCountOrZero: cfg.GradientLEDs,
 	}
-	if opts.WallpaperGradientStrip {
-		if _, ok := src.(*source.WallpaperAverage); !ok {
-			return fmt.Errorf("gradient requires wallpaper source")
-		}
-		n, err := wled.ResolveGradientLEDCount(cfg.IP, opts.GradientLEDCountOrZero)
-		if err != nil {
-			return err
-		}
-		stripRGB, err := wallpaper.ColumnStripForLEDCount(wallpaper.CurrentSymlink(), n)
-		if err != nil {
-			return err
-		}
-		for i := range stripRGB {
-			stripRGB[i] = color.ScaleSaturation(stripRGB[i], cfg.Saturation)
-		}
-		if !tracker.ShouldSendGradient(stripRGB) {
-			return nil
-		}
-		tracker.MarkGradientSent(stripRGB)
-		return wled.PostSpatialGradientJSON(cfg.IP, stripRGB, cfg.Brightness)
-	}
-	rgb, err := src.Read()
+	prep, skip, err := daemon.PreparePushColors(src, cfg.IP, cfg.Saturation, opts, true, true)
 	if err != nil {
 		return err
 	}
-	rgb = color.ScaleSaturation(rgb, cfg.Saturation)
-	if !tracker.ShouldSendSolid(rgb) {
-		return nil
-	}
-	tracker.MarkSolidSent(rgb)
-	return wled.PostSolidJSON(cfg.IP, rgb, cfg.Brightness)
+	return daemon.DeliverPreparedColors(cfg.IP, cfg.Brightness, cfg.Saturation, tracker, prep, skip, false)
 }
 
 // previewSolidToWLED reads the color source and pushes a solid color (tests).
