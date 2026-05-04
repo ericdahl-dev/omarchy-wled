@@ -26,6 +26,7 @@ pip install -e ".[all]"
 
 ## Architecture notes
 
+- Go CLI/daemon uses `internal/*` packages (`source`, `daemon`, `wled`, `wallpaper`, ...); `main.go` is thin wiring
 - Core logic lives in `omarchy_wled.py` — keep it single-file
 - TUI lives in `omarchy_wled_tui.py` (Textual app) — intentional exception to the single-file rule
 - `ColorSource` protocol: `read()`, `watch_path()`, `is_trigger()` — the seam for new sources
@@ -42,9 +43,11 @@ All architectural issues from the initial audit have been resolved. No known ope
 
 | File | Purpose |
 |---|---|
-| `main.go` | Go CLI: Color Source, push/watch/poll, config |
-| `wallpaper.go` | Go: wallpaper decode, γ pipeline, column→LED strip |
-| `wled.go` | Go: WLED HTTP (solid, spatial `seg.i`, LED count) |
+| `main.go` | Go CLI entry (flags, orchestration) |
+| `internal/source` | `Source` interface; theme row vs wallpaper average |
+| `internal/daemon` | Push dedupe, fsnotify watch, poll fallback |
+| `internal/wallpaper` | Wallpaper decode, γ pipeline, column→LED strip |
+| `internal/wled` | WLED HTTP (solid, spatial `seg.i`, LED count) |
 | `main_test.go` | Go test suite |
 | `omarchy_wled.py` | Python core (TUI / optional pip install) |
 | `omarchy_wled_tui.py` | Textual TUI (`omarchy-wled-tui` entry point) |

@@ -9,6 +9,12 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/ericdahl-dev/omarchy-wled/internal/color"
+	"github.com/ericdahl-dev/omarchy-wled/internal/daemon"
+	"github.com/ericdahl-dev/omarchy-wled/internal/paths"
+	"github.com/ericdahl-dev/omarchy-wled/internal/source"
+	"github.com/ericdahl-dev/omarchy-wled/internal/wallpaper"
+	"github.com/ericdahl-dev/omarchy-wled/internal/wled"
 	"golang.org/x/term"
 )
 
@@ -17,10 +23,11 @@ var tuiStdin = os.Stdin
 
 // runTUI starts the configuration TUI (omarchy-wled tui subcommand).
 func runTUI() error {
+	paths.Init()
 	if !term.IsTerminal(int(tuiStdin.Fd())) {
 		return fmt.Errorf("omarchy-wled tui requires a terminal (stdin is not a TTY)")
 	}
-	cfg, err := loadTuiConfig(configPath)
+	cfg, err := loadTuiConfig(paths.ConfigPath)
 	if err != nil {
 		return err
 	}
@@ -97,7 +104,7 @@ type tuiModel struct {
 	serviceOn  bool
 	gradientOn bool // wallpaper-only; persisted as cfg.Gradient when source is bg
 
-	previewTracker    *pushTracker
+	previewTracker    *daemon.DedupeTracker
 	previewRGB        [3]uint8
 	previewRGBEnd     [3]uint8
 	previewIsGradient bool
@@ -140,7 +147,7 @@ func newTuiModel(initial *tuiConfig) *tuiModel {
 		satPct:         int(initial.Saturation * 100),
 		cfg:            *initial,
 		gradientOn:     grad,
-		previewTracker: &pushTracker{},
+		previewTracker: &daemon.DedupeTracker{},
 		width:          80,
 	}
 	if m.satPct > 200 {
@@ -236,7 +243,7 @@ func (m *tuiModel) updateSetupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			IP: ip, Source: tuiDefaultSource, Brightness: tuiDefaultBrightness, Saturation: tuiDefaultSaturation,
 			Gradient: false, GradientLEDs: 0,
 		}
-		if err := saveTuiConfig(configPath, &m.cfg); err != nil {
+		if err := saveTuiConfig(paths.ConfigPath, &m.cfg); err != nil {
 			m.errSetup = err.Error()
 			return m, nil
 		}
@@ -251,7 +258,7 @@ func (m *tuiModel) updateSetupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.gradientOn = false
 		m.brightPct = 100
 		m.satPct = int(tuiDefaultSaturation * 100)
-		m.previewTracker = &pushTracker{}
+		m.previewTracker = &daemon.DedupeTracker{}
 		return m, tea.Batch(
 			textinput.Blink,
 			func() tea.Msg {
@@ -413,7 +420,7 @@ func (m *tuiModel) currentConfigFromForm() tuiConfig {
 }
 
 func (m *tuiModel) resetPreviewTracker() {
-	m.previewTracker = &pushTracker{}
+	m.previewTracker = &daemon.DedupeTracker{}
 }
 
 func (m *tuiModel) schedulePreview() tea.Cmd {
@@ -442,23 +449,23 @@ func (m *tuiModel) runPreview() (tea.Model, tea.Cmd) {
 
 func (m *tuiModel) updatePreviewSwatches(cfg *tuiConfig) {
 	if cfg.Gradient && normalizeSource(cfg.Source) == "bg" {
-		n, err := resolveGradientLEDCount(cfg.IP, cfg.GradientLEDs)
+		n, err := wled.ResolveGradientLEDCount(cfg.IP, cfg.GradientLEDs)
 		if err != nil {
 			return
 		}
-		strip, err := wallpaperColumnAverageRowColorsForLEDs(wallpaperSymlink(), n)
+		strip, err := wallpaper.ColumnStripForLEDCount(wallpaper.CurrentSymlink(), n)
 		if err != nil || len(strip) == 0 {
 			return
 		}
-		m.previewRGB = applySaturation(strip[0], cfg.Saturation)
-		m.previewRGBEnd = applySaturation(strip[len(strip)-1], cfg.Saturation)
+		m.previewRGB = color.ScaleSaturation(strip[0], cfg.Saturation)
+		m.previewRGBEnd = color.ScaleSaturation(strip[len(strip)-1], cfg.Saturation)
 		m.previewIsGradient = true
 		return
 	}
 	m.previewIsGradient = false
-	src := makeSource(normalizeSource(cfg.Source))
+	src := source.FromFlag(normalizeSource(cfg.Source))
 	if rgb, err := src.Read(); err == nil {
-		m.previewRGB = applySaturation(rgb, cfg.Saturation)
+		m.previewRGB = color.ScaleSaturation(rgb, cfg.Saturation)
 	}
 }
 
@@ -474,7 +481,7 @@ func (m *tuiModel) doSave() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	was := newServiceController(cfg.IP).IsActive()
-	if err := saveTuiConfig(configPath, &cfg); err != nil {
+	if err := saveTuiConfig(paths.ConfigPath, &cfg); err != nil {
 		m.setToast(err.Error(), true)
 		return m, nil
 	}
@@ -502,7 +509,7 @@ func (m *tuiModel) toggleService() (tea.Model, tea.Cmd) {
 		m.setToast("IP is required to control service.", true)
 		return m, nil
 	}
-	if err := saveTuiConfig(configPath, &cfg); err != nil {
+	if err := saveTuiConfig(paths.ConfigPath, &cfg); err != nil {
 		m.setToast(err.Error(), true)
 		return m, nil
 	}

@@ -7,6 +7,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/ericdahl-dev/omarchy-wled/internal/color"
+	"github.com/ericdahl-dev/omarchy-wled/internal/config"
+	"github.com/ericdahl-dev/omarchy-wled/internal/daemon"
+	"github.com/ericdahl-dev/omarchy-wled/internal/source"
+	"github.com/ericdahl-dev/omarchy-wled/internal/wallpaper"
+	"github.com/ericdahl-dev/omarchy-wled/internal/wled"
 )
 
 // tuiConfig matches ~/.config/omarchy-wled/config.toml fields used by the TUI.
@@ -88,7 +95,7 @@ func loadTuiConfig(path string) (*tuiConfig, error) {
 		}
 		return nil, err
 	}
-	m := parseFlatConfigToml(data)
+	m := config.ParseFlatBytes(data)
 	if len(m) == 0 {
 		return nil, nil
 	}
@@ -113,7 +120,7 @@ func loadTuiConfig(path string) (*tuiConfig, error) {
 		}
 	}
 	grad := false
-	if v, ok := m["gradient"]; ok && parseTomlBool(v) {
+	if v, ok := m["gradient"]; ok && config.ParseBool(v) {
 		grad = true
 	}
 	gradLEDs := 0
@@ -134,16 +141,6 @@ func loadTuiConfig(path string) (*tuiConfig, error) {
 		Gradient:     grad,
 		GradientLEDs: gradLEDs,
 	}, nil
-}
-
-func parseFlatConfigToml(data []byte) map[string]string {
-	cfg := map[string]string{}
-	for _, m := range flatTomlConfigLinePattern.FindAllStringSubmatch(string(data), -1) {
-		val := strings.TrimSpace(m[2])
-		val = strings.Trim(val, `"`)
-		cfg[m[1]] = val
-	}
-	return cfg
 }
 
 // saveTuiConfig writes flat TOML (same shape as Python save_config).
@@ -168,54 +165,54 @@ gradient_leds = %d
 
 // previewPushTUI sends live preview to WLED (solid or wallpaper gradient), using the same
 // dedupe rules as the daemon.
-func previewPushTUI(cfg *tuiConfig, tracker *pushTracker) error {
-	src := makeSource(normalizeSource(cfg.Source))
-	opts := pushOpts{
-		bgGradient:   cfg.Gradient && normalizeSource(cfg.Source) == "bg",
-		gradientLEDs: cfg.GradientLEDs,
+func previewPushTUI(cfg *tuiConfig, tracker *daemon.DedupeTracker) error {
+	src := source.FromFlag(normalizeSource(cfg.Source))
+	opts := daemon.PushOptions{
+		WallpaperGradientStrip: cfg.Gradient && normalizeSource(cfg.Source) == "bg",
+		GradientLEDCountOrZero: cfg.GradientLEDs,
 	}
-	if opts.bgGradient {
-		if _, ok := src.(*BgColorSource); !ok {
+	if opts.WallpaperGradientStrip {
+		if _, ok := src.(*source.WallpaperAverage); !ok {
 			return fmt.Errorf("gradient requires wallpaper source")
 		}
-		n, err := resolveGradientLEDCount(cfg.IP, opts.gradientLEDs)
+		n, err := wled.ResolveGradientLEDCount(cfg.IP, opts.GradientLEDCountOrZero)
 		if err != nil {
 			return err
 		}
-		stripRGB, err := wallpaperColumnAverageRowColorsForLEDs(wallpaperSymlink(), n)
+		stripRGB, err := wallpaper.ColumnStripForLEDCount(wallpaper.CurrentSymlink(), n)
 		if err != nil {
 			return err
 		}
 		for i := range stripRGB {
-			stripRGB[i] = applySaturation(stripRGB[i], cfg.Saturation)
+			stripRGB[i] = color.ScaleSaturation(stripRGB[i], cfg.Saturation)
 		}
-		if !tracker.shouldSendGradient(stripRGB) {
+		if !tracker.ShouldSendGradient(stripRGB) {
 			return nil
 		}
-		tracker.markGradient(stripRGB)
-		return sendSpatialGradientToWLED(cfg.IP, stripRGB, cfg.Brightness)
+		tracker.MarkGradientSent(stripRGB)
+		return wled.PostSpatialGradientJSON(cfg.IP, stripRGB, cfg.Brightness)
 	}
 	rgb, err := src.Read()
 	if err != nil {
 		return err
 	}
-	rgb = applySaturation(rgb, cfg.Saturation)
-	if !tracker.shouldSendSolid(rgb) {
+	rgb = color.ScaleSaturation(rgb, cfg.Saturation)
+	if !tracker.ShouldSendSolid(rgb) {
 		return nil
 	}
-	tracker.markSolid(rgb)
-	return sendColorToWLED(cfg.IP, rgb, cfg.Brightness)
+	tracker.MarkSolidSent(rgb)
+	return wled.PostSolidJSON(cfg.IP, rgb, cfg.Brightness)
 }
 
 // previewSolidToWLED reads the color source and pushes a solid color (tests).
 func previewSolidToWLED(ip, sourceName string, brightness255 int, saturation float64) error {
-	src := makeSource(normalizeSource(sourceName))
+	src := source.FromFlag(normalizeSource(sourceName))
 	rgb, err := src.Read()
 	if err != nil {
 		return err
 	}
-	rgb = applySaturation(rgb, saturation)
-	return sendColorToWLED(ip, rgb, brightness255)
+	rgb = color.ScaleSaturation(rgb, saturation)
+	return wled.PostSolidJSON(ip, rgb, brightness255)
 }
 
 // ---------------------------------------------------------------------------
