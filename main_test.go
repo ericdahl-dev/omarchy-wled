@@ -612,6 +612,18 @@ func TestBgSourceIsTriggerOnBackgroundLink(t *testing.T) {
 // parseArgs / version
 // ---------------------------------------------------------------------------
 
+func TestArgsRequestVersion(t *testing.T) {
+	if !argsRequestVersion([]string{"-v"}) || !argsRequestVersion([]string{"-V"}) {
+		t.Fatal("expected -v and -V")
+	}
+	if !argsRequestVersion([]string{"-source", "accent", "--version"}) {
+		t.Fatal("expected --version anywhere in argv")
+	}
+	if argsRequestVersion([]string{"-source", "accent"}) {
+		t.Fatal("unexpected")
+	}
+}
+
 func TestParseArgsVersionShortFlag(t *testing.T) {
 	opts, err := parseArgs([]string{"-v"}, map[string]string{}, io.Discard)
 	if err != nil {
@@ -632,6 +644,16 @@ func TestParseArgsVersionLongFlag(t *testing.T) {
 	}
 	if !opts.showVersion {
 		t.Fatal("showVersion: want true")
+	}
+}
+
+func TestParseArgsVersionDashUpperV(t *testing.T) {
+	opts, err := parseArgs([]string{"-V"}, map[string]string{}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.showVersion {
+		t.Fatal("showVersion: want true for -V")
 	}
 }
 

@@ -65,6 +65,7 @@ func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts
 
 	opts := &cliOpts{}
 	fs.BoolVar(&opts.showVersion, "v", false, "Print version and exit")
+	fs.BoolVar(&opts.showVersion, "V", false, "Print version and exit")
 	fs.BoolVar(&opts.showVersion, "version", false, "Print version and exit")
 
 	sourceName := fs.String("source", defaultSource,
@@ -111,6 +112,16 @@ func validateCli(opts *cliOpts) error {
 	return nil
 }
 
+func argsRequestVersion(args []string) bool {
+	for _, a := range args {
+		switch a {
+		case "-v", "-V", "-version", "--version":
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
 	paths.Init()
 
@@ -120,6 +131,11 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	}
+
+	if argsRequestVersion(os.Args[1:]) {
+		fmt.Println(version)
+		os.Exit(0)
 	}
 
 	cfg := config.LoadFlatFile(paths.ConfigPath)
