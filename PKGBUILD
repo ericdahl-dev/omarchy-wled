@@ -1,6 +1,6 @@
 # Maintainer: ericdahl-dev
 pkgname=omarchy-wled
-pkgver=0.2.1
+pkgver=0.2.2
 pkgrel=1
 pkgdesc="Sync Omarchy theme accent or wallpaper color to a WLED device"
 arch=('x86_64' 'aarch64')
