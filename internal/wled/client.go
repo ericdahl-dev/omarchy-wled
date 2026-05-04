@@ -1,4 +1,5 @@
-package main
+// Package wled posts JSON state to a WLED device (solid color, per-LED spatial strip, LED count).
+package wled
 
 import (
 	"bytes"
@@ -10,18 +11,14 @@ import (
 	"time"
 )
 
-// wledURLOverride can be set in tests to redirect requests to a local server.
-// When empty (the default), sendColorToWLED constructs the real WLED URL.
-var wledURLOverride string
+// TestStatePostURL, when set, is used instead of constructing http://<ip>/json/state (integration tests).
+var TestStatePostURL string
 
-// maxGradientLEDChunk is the most colors WLED recommends per /json/state POST for seg.i.
 const maxGradientLEDChunk = 256
 
-// sendColorToWLED pushes a solid color to a WLED device via its JSON API.
-// After -gradient (seg.i individual LED control), WLED keeps the segment frozen until
-// effect + colors are set again; fx=Solid and frz=false restore normal solid fill.
-func sendColorToWLED(ip string, rgb [3]uint8, brightness int) error {
-	url := wledURLOverride
+// PostSolidJSON sends a single solid RGB with brightness; clears gradient freeze (fx=Solid, frz=false).
+func PostSolidJSON(ip string, rgb [3]uint8, brightness int) error {
+	url := TestStatePostURL
 	if url == "" {
 		url = "http://" + ip + "/json/state"
 	}
@@ -57,10 +54,9 @@ func sendColorToWLED(ip string, rgb [3]uint8, brightness int) error {
 	return nil
 }
 
-// wledJSONURL builds http(s)://host/json/<name> honoring wledURLOverride in tests.
-func wledJSONURL(ip string, name string) string {
-	if wledURLOverride != "" {
-		base := strings.TrimSuffix(wledURLOverride, "/json/state")
+func jsonGETURL(ip string, name string) string {
+	if TestStatePostURL != "" {
+		base := strings.TrimSuffix(TestStatePostURL, "/json/state")
 		return base + "/json/" + name
 	}
 	return "http://" + ip + "/json/" + name
@@ -71,9 +67,9 @@ var (
 	cachedGradientLEDCountFor string
 )
 
-// fetchWLEDLEDCount reads GET /json/info and returns leds.count.
-func fetchWLEDLEDCount(ip string) (int, error) {
-	url := wledJSONURL(ip, "info")
+// FetchLEDCountFromInfo calls GET /json/info and returns leds.count.
+func FetchLEDCountFromInfo(ip string) (int, error) {
+	url := jsonGETURL(ip, "info")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -102,14 +98,15 @@ func fetchWLEDLEDCount(ip string) (int, error) {
 	return info.Leds.Count, nil
 }
 
-func resolveGradientLEDCount(ip string, configured int) (int, error) {
+// ResolveGradientLEDCount returns configured count if >0, else caches GET /json/info for ip.
+func ResolveGradientLEDCount(ip string, configured int) (int, error) {
 	if configured > 0 {
 		return configured, nil
 	}
 	if cachedGradientLEDCount > 0 && cachedGradientLEDCountFor == ip {
 		return cachedGradientLEDCount, nil
 	}
-	n, err := fetchWLEDLEDCount(ip)
+	n, err := FetchLEDCountFromInfo(ip)
 	if err != nil {
 		return 0, err
 	}
@@ -122,8 +119,8 @@ func rgbToHex(r, g, b uint8) string {
 	return fmt.Sprintf("%02X%02X%02X", r, g, b)
 }
 
-// sendSpatialGradientToWLED paints per-LED colors using seg[].i (one entry per physical LED).
-func sendSpatialGradientToWLED(ip string, stripRGB [][3]uint8, brightness int) error {
+// PostSpatialGradientJSON paints one hex per physical LED via seg[].i (chunked for firmware limits).
+func PostSpatialGradientJSON(ip string, stripRGB [][3]uint8, brightness int) error {
 	if len(stripRGB) == 0 {
 		return fmt.Errorf("no strip colors")
 	}
@@ -131,7 +128,7 @@ func sendSpatialGradientToWLED(ip string, stripRGB [][3]uint8, brightness int) e
 	for i, rgb := range stripRGB {
 		hexes[i] = rgbToHex(rgb[0], rgb[1], rgb[2])
 	}
-	url := wledJSONURL(ip, "state")
+	url := jsonGETURL(ip, "state")
 	bri := max(0, min(255, brightness))
 
 	for offset := 0; offset < len(hexes); offset += maxGradientLEDChunk {

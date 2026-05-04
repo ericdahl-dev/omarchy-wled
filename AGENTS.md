@@ -24,9 +24,9 @@ go vet ./...
 
 ## Architecture notes
 
-- Core logic lives in Go (`main.go`, `wallpaper.go`, `wled.go`, `tui.go`, `tui_config.go`)
-- `ColorSource` interface: `Read()`, `WatchDir()`, `IsTrigger()`, `Sentinel()`
-- Poll fallback compares `Sentinel()` strings in `poll()` / `pollTick` when fsnotify is unavailable
+- Go CLI/daemon uses `internal/*` packages (`source`, `daemon`, `wled`, `wallpaper`, …); `main.go` is thin wiring
+- `source.Source` interface: `Read()`, `WatchDir()`, `IsTrigger()`, `Sentinel()`
+- Poll fallback compares `Sentinel()` strings when fsnotify is unavailable (`internal/daemon`)
 - Accent source defaults to 1.2× saturation; fg/bg default to 1.0×
 - See `docs/adr/` for recorded decisions
 
@@ -34,9 +34,11 @@ go vet ./...
 
 | File | Purpose |
 |---|---|
-| `main.go` | Go CLI: Color Source, push/watch/poll, config |
-| `wallpaper.go` | Go: wallpaper decode, γ pipeline, column→LED strip |
-| `wled.go` | Go: WLED HTTP (solid, spatial `seg.i`, LED count) |
+| `main.go` | Go CLI entry (flags, orchestration) |
+| `internal/source` | `Source` interface; theme row vs wallpaper average |
+| `internal/daemon` | Push dedupe, fsnotify watch, poll fallback |
+| `internal/wallpaper` | Wallpaper decode, γ pipeline, column→LED strip |
+| `internal/wled` | WLED HTTP (solid, spatial `seg.i`, LED count) |
 | `tui.go` | Bubble Tea TUI (`omarchy-wled tui`) |
 | `tui_config.go` | TUI config load/save, systemd helpers, preview push |
 | `main_test.go`, `tui_config_test.go` | Go tests |

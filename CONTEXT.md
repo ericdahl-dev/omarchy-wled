@@ -6,7 +6,7 @@ Sync color from an [Omarchy](https://omarchy.org) desktop environment to a [WLED
 
 ## Domain Glossary
 
-**Color Source** — anything that can produce an RGB color and describe what file to watch for changes. Three concrete sources exist: `accent` (theme accent key), `fg` / `foreground` (same — maps to the **`foreground`** key in `colors.toml`, Omarchy’s UI/font color), `bg` (wallpaper average). Implemented via `ThemeColorSource` and `BgColorSource`.
+**Color Source** — anything that can produce an RGB color and describe what file to watch for changes. Three concrete sources exist: `accent` (theme accent key), `fg` / `foreground` (same — maps to the **`foreground`** key in `colors.toml`, Omarchy’s UI/font color), `bg` (wallpaper average). In Go, `internal/source` implements this as the `Source` interface (`ThemeEntry` for TOML keys, `WallpaperAverage` for the background image).
 
 **Accent** — the highlight color defined in the Omarchy theme's `colors.toml`. Typically vivid but may be muted depending on the theme; boosted to 1.2× saturation by default.
 
@@ -18,18 +18,23 @@ Sync color from an [Omarchy](https://omarchy.org) desktop environment to a [WLED
 
 **Saturation boost** — scaling the HSV saturation channel before sending. Accent defaults to 1.2×; fg/bg default to 1.0×. Overridable via `-saturation`.
 
-**Sentinel** — a value that changes when the color source changes (e.g. file mtime, symlink target). Used by the poll fallback only — not part of the `ColorSource` interface.
+**Sentinel** — a value that changes when the color source changes (e.g. file mtime, symlink target). Used by the poll fallback only — not part of the `source.Source` interface.
 
-**Poll fallback** — when `fsnotify` cannot initialise a watcher (unusual on Linux), `poll()` runs a 1-second loop checking the sentinel value instead of using filesystem events.
+**Poll fallback** — when `fsnotify` cannot initialise a watcher (unusual on Linux), the daemon runs a 1-second loop checking the sentinel value instead of using filesystem events.
 
-**Seam** — the `ColorSource` interface: `Read()`, `WatchDir()`, `IsTrigger()`. Adding a new source means implementing this interface only.
+**Seam** — the `source.Source` interface: `Read()`, `WatchDir()`, `IsTrigger()`, `Sentinel()`. Adding a new source means implementing this interface only.
 
 ## File Layout
 
 ```
-main.go                 — CLI, Color Source, push/watch/poll, config
-wallpaper.go            — Wallpaper / Background decode, γ pipeline, column→LED strip
-wled.go                 — WLED HTTP client (solid, spatial seg.i, LED count)
+main.go                 — CLI entry: paths.Init, flags, daemon loop orchestration
+internal/paths          — Omarchy + app paths under $HOME
+internal/color          — colors.toml hex parse; HSV saturation scaling
+internal/config         — flat config.toml load (regex)
+internal/wallpaper      — image decode, γ pipeline, column→LED strip
+internal/wled           — HTTP JSON to WLED (solid, spatial seg.i, LED count)
+internal/source         — Source interface; theme vs wallpaper implementations
+internal/daemon         — push dedupe, fsnotify watch, poll fallback
 tui.go                  — Bubble Tea TUI (`omarchy-wled tui`)
 tui_config.go           — TUI config, systemd helpers, live preview
 main_test.go            — Go test suite
@@ -46,4 +51,3 @@ PKGBUILD                — AUR package definition (Go build)
 ~/.config/omarchy/current/background          — symlink to current wallpaper image
 ~/.config/omarchy-wled/config.toml            — optional saved settings (ip, source, brightness, saturation, optional gradient)
 ```
-
