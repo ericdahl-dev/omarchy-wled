@@ -38,7 +38,8 @@ func PreparePushColors(src source.Source, wledIP string, saturation float64, opt
 		if err != nil {
 			return PreparedColors{}, false, err
 		}
-		stripRGB, err := wallpaper.ColumnStripForLEDCount(wallpaper.CurrentSymlink(), n)
+		stripRGB, err := wallpaper.ColumnStripForLEDCount(
+			wallpaper.CurrentSymlink(), n, opts.GradientSample, opts.GradientRowPercent)
 		if err != nil {
 			if strictStripDecode {
 				return PreparedColors{}, false, err

@@ -53,6 +53,8 @@ const (
 	focusIP tuiFocus = iota
 	focusSource
 	focusGradient // wallpaper spatial strip (only when source = Wallpaper)
+	focusGradientSample
+	focusGradientRow
 	focusBrightness
 	focusSaturation
 	focusService
@@ -105,9 +107,11 @@ type tuiModel struct {
 	brightPct int // 0–100 step 2
 	satPct    int // 0–200 step 2 → saturation = satPct/100
 
-	cfg        tuiConfig
-	serviceOn  bool
-	gradientOn bool // wallpaper-only; persisted as cfg.Gradient when source is bg
+	cfg                 tuiConfig
+	serviceOn           bool
+	gradientOn          bool // wallpaper-only; persisted as cfg.Gradient when source is bg
+	gradientSampleIsRow bool // false = average (full-height column), true = single scanline
+	gradientRowPct      int  // 0–100 when gradientSampleIsRow
 
 	previewTracker    *daemon.DedupeTracker
 	previewRGB        [3]uint8
@@ -144,17 +148,27 @@ func newTuiModel(initial *tuiConfig) *tuiModel {
 	mt.Focus()
 
 	grad := initial.Gradient && sourceIdxFromName(initial.Source) == sourceIndexWallpaper
+	gs := normalizeGradientSample(initial.GradientSample)
+	gr := initial.GradientRow
+	if gr < 0 {
+		gr = 0
+	}
+	if gr > 100 {
+		gr = 100
+	}
 	m := &tuiModel{
-		screen:         tuiScreenMain,
-		mainTI:         mt,
-		focus:          focusIP,
-		sourceIx:       sourceIdxFromName(initial.Source),
-		brightPct:      brightness255ToPct(initial.Brightness),
-		satPct:         int(initial.Saturation * 100),
-		cfg:            *initial,
-		gradientOn:     grad,
-		previewTracker: &daemon.DedupeTracker{},
-		width:          80,
+		screen:              tuiScreenMain,
+		mainTI:              mt,
+		focus:               focusIP,
+		sourceIx:            sourceIdxFromName(initial.Source),
+		brightPct:           brightness255ToPct(initial.Brightness),
+		satPct:              int(initial.Saturation * 100),
+		cfg:                 *initial,
+		gradientOn:          grad,
+		gradientSampleIsRow: gs == "row",
+		gradientRowPct:      gr,
+		previewTracker:      &daemon.DedupeTracker{},
+		width:               80,
 	}
 	if m.satPct > 200 {
 		m.satPct = 200
@@ -247,7 +261,7 @@ func (m *tuiModel) updateSetupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.errSetup = ""
 		m.cfg = tuiConfig{
 			IP: ip, Source: tuiDefaultSource, Brightness: tuiDefaultBrightness, Saturation: tuiDefaultSaturation,
-			Gradient: false, GradientLEDs: 0,
+			Gradient: false, GradientLEDs: 0, GradientSample: "average", GradientRow: 50,
 		}
 		if err := saveTuiConfig(paths.ConfigPath, &m.cfg); err != nil {
 			m.errSetup = err.Error()
@@ -262,6 +276,8 @@ func (m *tuiModel) updateSetupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.focus = focusIP
 		m.sourceIx = 0
 		m.gradientOn = false
+		m.gradientSampleIsRow = false
+		m.gradientRowPct = 50
 		m.brightPct = 100
 		m.satPct = int(tuiDefaultSaturation * 100)
 		m.previewTracker = &daemon.DedupeTracker{}
@@ -315,6 +331,9 @@ func (m *tuiModel) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			if m.sourceIx != sourceIndexWallpaper {
 				m.gradientOn = false
+				if m.focus == focusGradient || m.focus == focusGradientSample || m.focus == focusGradientRow {
+					m.focus = focusSource
+				}
 			}
 			m.resetPreviewTracker()
 			m.ensureValidFocus()
@@ -326,6 +345,9 @@ func (m *tuiModel) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			if m.sourceIx != sourceIndexWallpaper {
 				m.gradientOn = false
+				if m.focus == focusGradient || m.focus == focusGradientSample || m.focus == focusGradientRow {
+					m.focus = focusSource
+				}
 			}
 			m.resetPreviewTracker()
 			m.ensureValidFocus()
@@ -334,7 +356,33 @@ func (m *tuiModel) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case focusGradient:
 		if k == " " {
 			m.gradientOn = !m.gradientOn
+			if !m.gradientOn && (m.focus == focusGradientSample || m.focus == focusGradientRow) {
+				m.focus = focusGradient
+			}
 			m.resetPreviewTracker()
+			return m, m.schedulePreview()
+		}
+	case focusGradientSample:
+		switch k {
+		case " ", "left", "right", "h", "l":
+			m.gradientSampleIsRow = !m.gradientSampleIsRow
+			if !m.gradientSampleIsRow && m.focus == focusGradientRow {
+				m.focus = focusGradientSample
+			}
+			m.resetPreviewTracker()
+			return m, m.schedulePreview()
+		}
+	case focusGradientRow:
+		switch k {
+		case "left", "down", "h":
+			if m.gradientRowPct > 0 {
+				m.gradientRowPct--
+			}
+			return m, m.schedulePreview()
+		case "right", "up", "l":
+			if m.gradientRowPct < 100 {
+				m.gradientRowPct++
+			}
 			return m, m.schedulePreview()
 		}
 	case focusBrightness:
@@ -388,6 +436,12 @@ func (m *tuiModel) focusSequence() []tuiFocus {
 	seq := []tuiFocus{focusIP, focusSource}
 	if m.sourceIx == sourceIndexWallpaper {
 		seq = append(seq, focusGradient)
+		if m.gradientOn {
+			seq = append(seq, focusGradientSample)
+			if m.gradientSampleIsRow {
+				seq = append(seq, focusGradientRow)
+			}
+		}
 	}
 	seq = append(seq, focusBrightness, focusSaturation, focusService, focusSave, focusQuit)
 	return seq
@@ -410,18 +464,32 @@ func (m *tuiModel) ensureValidFocus() {
 	if m.focus == focusGradient && m.sourceIx != sourceIndexWallpaper {
 		m.focus = focusSource
 	}
+	if m.focus == focusGradientSample || m.focus == focusGradientRow {
+		if m.sourceIx != sourceIndexWallpaper || !m.gradientOn {
+			m.focus = focusGradient
+		}
+	}
+	if m.focus == focusGradientRow && !m.gradientSampleIsRow {
+		m.focus = focusGradientSample
+	}
 }
 
 func (m *tuiModel) currentConfigFromForm() tuiConfig {
 	ip := strings.TrimSpace(m.mainTI.Value())
 	grad := m.gradientOn && m.sourceIx == sourceIndexWallpaper
+	gs := "average"
+	if m.gradientSampleIsRow {
+		gs = "row"
+	}
 	return tuiConfig{
-		IP:           ip,
-		Source:       sourceIdxToName(m.sourceIx),
-		Brightness:   brightnessPctTo255(m.brightPct),
-		Saturation:   float64(m.satPct) / 100.0,
-		Gradient:     grad,
-		GradientLEDs: m.cfg.GradientLEDs,
+		IP:             ip,
+		Source:         sourceIdxToName(m.sourceIx),
+		Brightness:     brightnessPctTo255(m.brightPct),
+		Saturation:     float64(m.satPct) / 100.0,
+		Gradient:       grad,
+		GradientLEDs:   m.cfg.GradientLEDs,
+		GradientSample: gs,
+		GradientRow:    m.gradientRowPct,
 	}
 }
 
@@ -458,7 +526,11 @@ func (m *tuiModel) updatePreviewSwatches(cfg *tuiConfig) {
 		if err != nil {
 			return
 		}
-		strip, err := wallpaper.ColumnStripForLEDCount(wallpaper.CurrentSymlink(), n)
+		kind := wallpaper.GradientSampleAverage
+		if normalizeGradientSample(cfg.GradientSample) == "row" {
+			kind = wallpaper.GradientSampleRow
+		}
+		strip, err := wallpaper.ColumnStripForLEDCount(wallpaper.CurrentSymlink(), n, kind, cfg.GradientRow)
 		if err != nil || len(strip) == 0 {
 			return
 		}
@@ -573,6 +645,20 @@ func (m *tuiModel) View() string {
 			glabel = "On (left→right strip)"
 		}
 		b.WriteString(m.renderLabeled("Wallpaper gradient", glabel+" (Space)", m.focus == focusGradient) + "\n")
+		if m.gradientOn {
+			slabel := "Average (full height)"
+			if m.gradientSampleIsRow {
+				slabel = "Row (scanline)"
+			}
+			b.WriteString(m.renderLabeled("Gradient sample", slabel+" (←/→ Space)", m.focus == focusGradientSample) + "\n")
+			if m.gradientSampleIsRow {
+				b.WriteString(m.renderLabeled(
+					"Gradient row (0=top·100=bottom)",
+					fmt.Sprintf("%d%% %s", m.gradientRowPct, m.renderBar(m.gradientRowPct, 100)),
+					m.focus == focusGradientRow,
+				) + "\n")
+			}
+		}
 	}
 	b.WriteString(m.renderLabeled(fmt.Sprintf("Brightness: %d%%", m.brightPct), m.renderBar(m.brightPct, 100), m.focus == focusBrightness) + "\n")
 	b.WriteString(m.renderLabeled(fmt.Sprintf("Saturation: %.2f×", float64(m.satPct)/100.0), m.renderBar(m.satPct, 200), m.focus == focusSaturation) + "\n\n")
