@@ -15,7 +15,10 @@ import (
 type Source interface {
 	Read() ([3]uint8, error)
 	WatchDir() string
+	// IsTrigger reports whether a filesystem event path should trigger a refresh (same paths fsnotify watches).
 	IsTrigger(path string) bool
+	// Sentinel returns a string that changes when the underlying theme/wallpaper state changes.
+	// The daemon’s poll fallback compares it once per second when fsnotify is unavailable.
 	Sentinel() (string, error)
 }
 
