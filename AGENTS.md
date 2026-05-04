@@ -36,7 +36,7 @@ go vet ./...
 |---|---|
 | `main.go` | Go CLI entry (flags, orchestration) |
 | `internal/source` | `Source` interface; theme row vs wallpaper average |
-| `internal/daemon` | Push dedupe, fsnotify watch, poll fallback |
+| `internal/daemon` | Push dedupe, `PreparePushColors`/`DeliverPreparedColors`, fsnotify, `PollFallback` |
 | `internal/wallpaper` | Wallpaper decode, γ pipeline, column→LED strip |
 | `internal/wled` | WLED HTTP (solid, spatial `seg.i`, LED count) |
 | `tui.go` | Bubble Tea TUI (`omarchy-wled tui`) |
