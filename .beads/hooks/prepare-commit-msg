@@ -22,3 +22,12 @@ if command -v bd >/dev/null 2>&1; then
   if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi
 fi
 # --- END BEADS INTEGRATION v1.0.3 ---
+# Drop Cursor agent trailers (IDE may inject despite Cursor Settings → Agent → Attribution).
+if [ -n "${1:-}" ] && [ -f "$1" ]; then
+  _strip_tmp="$1.strip.$$"
+  if grep -vE '^Co-authored-by: Cursor|^Made-with: Cursor' "$1" > "$_strip_tmp" 2>/dev/null; then
+    mv "$_strip_tmp" "$1"
+  else
+    rm -f "$_strip_tmp"
+  fi
+fi
