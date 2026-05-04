@@ -60,7 +60,12 @@ const (
 	focusQuit
 )
 
-const sourceMaxIdx = 2
+const (
+	sourceIndexAccent     = 0
+	sourceIndexForeground = 1
+	sourceIndexWallpaper  = 2
+	sourceMaxIdx          = sourceIndexWallpaper
+)
 
 var sourceLabels = []string{"Accent", "Foreground", "Wallpaper avg"}
 
@@ -86,7 +91,7 @@ func sourceIdxToName(idx int) string {
 	}
 }
 
-type previewTickMsg struct{ gen int }
+type previewTickMsg struct{ scheduleID int }
 
 type serviceActiveMsg struct{ active bool }
 
@@ -113,8 +118,9 @@ type tuiModel struct {
 	toast      string // save / service messages
 	toastErr   bool
 
-	previewGen int
-	previewArm int
+	// previewScheduleID increments on each schedulePreview; the tick message carries a copy.
+	// A tick is stale if its ID does not match (a newer preview was scheduled).
+	previewScheduleID int
 
 	errSetup string
 }
@@ -137,7 +143,7 @@ func newTuiModel(initial *tuiConfig) *tuiModel {
 	mt.CharLimit = 255
 	mt.Focus()
 
-	grad := initial.Gradient && sourceIdxFromName(initial.Source) == 2
+	grad := initial.Gradient && sourceIdxFromName(initial.Source) == sourceIndexWallpaper
 	m := &tuiModel{
 		screen:         tuiScreenMain,
 		mainTI:         mt,
@@ -212,7 +218,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case previewTickMsg:
-		if msg.gen != m.previewArm {
+		if msg.scheduleID != m.previewScheduleID {
 			return m, nil
 		}
 		return m.runPreview()
@@ -307,7 +313,7 @@ func (m *tuiModel) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.sourceIx < 0 {
 				m.sourceIx = sourceMaxIdx
 			}
-			if m.sourceIx != 2 {
+			if m.sourceIx != sourceIndexWallpaper {
 				m.gradientOn = false
 			}
 			m.resetPreviewTracker()
@@ -318,7 +324,7 @@ func (m *tuiModel) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.sourceIx > sourceMaxIdx {
 				m.sourceIx = 0
 			}
-			if m.sourceIx != 2 {
+			if m.sourceIx != sourceIndexWallpaper {
 				m.gradientOn = false
 			}
 			m.resetPreviewTracker()
@@ -380,7 +386,7 @@ func (m *tuiModel) syncFocus() tea.Cmd {
 
 func (m *tuiModel) focusSequence() []tuiFocus {
 	seq := []tuiFocus{focusIP, focusSource}
-	if m.sourceIx == 2 {
+	if m.sourceIx == sourceIndexWallpaper {
 		seq = append(seq, focusGradient)
 	}
 	seq = append(seq, focusBrightness, focusSaturation, focusService, focusSave, focusQuit)
@@ -401,14 +407,14 @@ func (m *tuiModel) cycleFocus(dir int) {
 }
 
 func (m *tuiModel) ensureValidFocus() {
-	if m.focus == focusGradient && m.sourceIx != 2 {
+	if m.focus == focusGradient && m.sourceIx != sourceIndexWallpaper {
 		m.focus = focusSource
 	}
 }
 
 func (m *tuiModel) currentConfigFromForm() tuiConfig {
 	ip := strings.TrimSpace(m.mainTI.Value())
-	grad := m.gradientOn && m.sourceIx == 2
+	grad := m.gradientOn && m.sourceIx == sourceIndexWallpaper
 	return tuiConfig{
 		IP:           ip,
 		Source:       sourceIdxToName(m.sourceIx),
@@ -424,11 +430,10 @@ func (m *tuiModel) resetPreviewTracker() {
 }
 
 func (m *tuiModel) schedulePreview() tea.Cmd {
-	m.previewGen++
-	m.previewArm = m.previewGen
-	g := m.previewGen
+	m.previewScheduleID++
+	id := m.previewScheduleID
 	return tea.Tick(80*time.Millisecond, func(t time.Time) tea.Msg {
-		return previewTickMsg{gen: g}
+		return previewTickMsg{scheduleID: id}
 	})
 }
 
@@ -562,7 +567,7 @@ func (m *tuiModel) View() string {
 	b.WriteString(lipgloss.NewStyle().Foreground(accent).Bold(true).Render("Configuration") + "\n")
 	b.WriteString(m.renderLabeled("WLED IP / Host", m.mainTI.View(), m.focus == focusIP) + "\n")
 	b.WriteString(m.renderLabeled("Color source", m.renderSourceRow(), m.focus == focusSource) + "\n")
-	if m.sourceIx == 2 {
+	if m.sourceIx == sourceIndexWallpaper {
 		glabel := "Off"
 		if m.gradientOn {
 			glabel = "On (left→right strip)"
@@ -592,10 +597,10 @@ func (m *tuiModel) View() string {
 			s1.Render(fmt.Sprintf("rgb(%d,%d,%d) %s", r1, g1, b1, h1))
 		b.WriteString("  " + line + "\n\n")
 	} else {
-		r, g, c := m.previewRGB[0], m.previewRGB[1], m.previewRGB[2]
-		hex := fmt.Sprintf("#%02x%02x%02x", r, g, c)
+		r0, g0, b0 := m.previewRGB[0], m.previewRGB[1], m.previewRGB[2]
+		hex := fmt.Sprintf("#%02x%02x%02x", r0, g0, b0)
 		swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(hex)).Bold(true)
-		b.WriteString(swatch.Render(fmt.Sprintf("  rgb(%d, %d, %d)  %s", r, g, c, hex)) + "\n\n")
+		b.WriteString(swatch.Render(fmt.Sprintf("  rgb(%d, %d, %d)  %s", r0, g0, b0, hex)) + "\n\n")
 	}
 
 	saveBtn := "[ Save ]"
