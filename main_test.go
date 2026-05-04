@@ -331,7 +331,7 @@ func TestPushIfChangedGradientDedupes(t *testing.T) {
 
 	tracker := &daemon.DedupeTracker{}
 	src := &source.WallpaperAverage{}
-	opts := daemon.PushOptions{WallpaperGradientStrip: true, GradientLEDCountOrZero: 4}
+	opts := daemon.PushOptions{WallpaperGradientStrip: true, GradientLEDCountOrZero: 4, GradientRowPercent: 50}
 	daemon.PushCurrentColorIfChanged(src, tracker, "ignored", 255, 1.0, opts)
 	daemon.PushCurrentColorIfChanged(src, tracker, "ignored", 255, 1.0, opts)
 	if sent != 1 {
@@ -460,7 +460,7 @@ func TestWallpaperColumnAverageMapsToLEDs(t *testing.T) {
 	if err := os.Symlink(imgPath, link); err != nil {
 		t.Fatal(err)
 	}
-	colors, err := wallpaper.ColumnStripForLEDCount(link, 3)
+	colors, err := wallpaper.ColumnStripForLEDCount(link, 3, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,6 +472,47 @@ func TestWallpaperColumnAverageMapsToLEDs(t *testing.T) {
 	}
 	if colors[2][2] <= colors[2][0] {
 		t.Errorf("last LED should read bluer than red: %v", colors[2])
+	}
+}
+
+// Two-row image: top row red-channel gradient; bottom row blue-channel gradient — row choice changes strip.
+func TestWallpaperGradientScanlineDiffersByRow(t *testing.T) {
+	dir := t.TempDir()
+	img := image.NewRGBA(image.Rect(0, 0, 3, 2))
+	for x := 0; x < 3; x++ {
+		img.Set(x, 0, imgcolor.RGBA{R: uint8(50 + x*80), A: 255})
+		img.Set(x, 1, imgcolor.RGBA{B: uint8(50 + x*80), A: 255})
+	}
+	imgPath := filepath.Join(dir, "rows.png")
+	f, err := os.Create(imgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	f.Close()
+	link := filepath.Join(dir, "background")
+	if err := os.Symlink(imgPath, link); err != nil {
+		t.Fatal(err)
+	}
+	top, err := wallpaper.ColumnStripForLEDCount(link, 3, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bot, err := wallpaper.ColumnStripForLEDCount(link, 3, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if top[0] == bot[0] && top[2] == bot[2] {
+		t.Fatalf("top vs bottom row strips too similar: top[0]=%v bot[0]=%v", top[0], bot[0])
+	}
+	if top[0][0] <= top[0][2] {
+		t.Errorf("top row strip should be red-heavy at left: %v", top[0])
+	}
+	if bot[0][2] <= bot[0][0] {
+		t.Errorf("bottom row strip should be blue-heavy at left: %v", bot[0])
 	}
 }
 
@@ -658,6 +699,7 @@ func TestParseArgsGradientFromConfig(t *testing.T) {
 	opts, err := parseArgs([]string{}, map[string]string{
 		"gradient":      "true",
 		"gradient_leds": "120",
+		"gradient_row":  "25",
 	}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
@@ -667,5 +709,17 @@ func TestParseArgsGradientFromConfig(t *testing.T) {
 	}
 	if opts.gradientLEDs != 120 {
 		t.Fatalf("gradientLEDs: got %d want 120", opts.gradientLEDs)
+	}
+	if opts.gradientRow != 25 {
+		t.Fatalf("gradientRow: got %d want 25", opts.gradientRow)
+	}
+}
+
+func TestValidateCliGradientRowRange(t *testing.T) {
+	if err := validateCli(&cliOpts{gradientRow: 101}); err == nil {
+		t.Fatal("expected error for gradient row > 100")
+	}
+	if err := validateCli(&cliOpts{gradientRow: -1}); err == nil {
+		t.Fatal("expected error for gradient row < 0")
 	}
 }

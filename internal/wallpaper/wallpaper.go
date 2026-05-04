@@ -4,7 +4,6 @@ package wallpaper
 import (
 	"fmt"
 	"image"
-	"image/color"
 	"image/draw"
 	_ "image/jpeg"
 	_ "image/png"
@@ -131,34 +130,44 @@ func LeftRightHalvesLinearAvg(wallpaperSymlinkPath string) (left, right [3]uint8
 	return left, right, err
 }
 
-func columnAverageRow(rgbaFull *image.RGBA) *image.RGBA {
+// RowYFromPercent maps rowPercent in [0,100] to a row index in [0, height-1].
+// 0 is the top row, 100 is the bottom row.
+func RowYFromPercent(height, rowPercent int) int {
+	if height <= 1 {
+		return 0
+	}
+	if rowPercent < 0 {
+		rowPercent = 0
+	}
+	if rowPercent > 100 {
+		rowPercent = 100
+	}
+	return int(math.Round(float64(rowPercent) / 100.0 * float64(height-1)))
+}
+
+func horizontalScanlineRGBA(rgbaFull *image.RGBA, rowIndex int) *image.RGBA {
 	b := rgbaFull.Bounds()
 	w, h := b.Dx(), b.Dy()
 	out := image.NewRGBA(image.Rect(0, 0, w, 1))
-	n := float64(h)
+	if w <= 0 || h <= 0 {
+		return out
+	}
+	if rowIndex < 0 {
+		rowIndex = 0
+	}
+	if rowIndex >= h {
+		rowIndex = h - 1
+	}
+	y := b.Min.Y + rowIndex
 	for x := 0; x < w; x++ {
-		var sumR, sumG, sumB float64
-		for y := 0; y < h; y++ {
-			c := rgbaFull.RGBAAt(b.Min.X+x, b.Min.Y+y)
-			sumR += float64(wallpaperSrgbToLinearByte[c.R])
-			sumG += float64(wallpaperSrgbToLinearByte[c.G])
-			sumB += float64(wallpaperSrgbToLinearByte[c.B])
-		}
-		lr := uint8(math.Round(sumR / n))
-		lg := uint8(math.Round(sumG / n))
-		lb := uint8(math.Round(sumB / n))
-		out.Set(x, 0, color.RGBA{
-			R: wallpaperLinearToSrgbByte[lr],
-			G: wallpaperLinearToSrgbByte[lg],
-			B: wallpaperLinearToSrgbByte[lb],
-			A: 255,
-		})
+		out.Set(x, 0, rgbaFull.RGBAAt(b.Min.X+x, y))
 	}
 	return out
 }
 
-// ColumnStripForLEDCount builds one sample per wallpaper column, then resamples to ledCount LEDs.
-func ColumnStripForLEDCount(wallpaperSymlinkPath string, ledCount int) ([][3]uint8, error) {
+// ColumnStripForLEDCount builds one sample per wallpaper column at the horizontal row rowPercent,
+// then resamples to ledCount LEDs. rowPercent 0 = top, 100 = bottom.
+func ColumnStripForLEDCount(wallpaperSymlinkPath string, ledCount int, rowPercent int) ([][3]uint8, error) {
 	if ledCount <= 0 {
 		return nil, fmt.Errorf("ledCount must be positive")
 	}
@@ -181,7 +190,8 @@ func ColumnStripForLEDCount(wallpaperSymlinkPath string, ledCount int) ([][3]uin
 	}
 	rgbaFull := image.NewRGBA(bounds)
 	draw.Draw(rgbaFull, bounds, decoded, bounds.Min, draw.Src)
-	rowRgba := columnAverageRow(rgbaFull)
+	y := RowYFromPercent(bounds.Dy(), rowPercent)
+	rowRgba := horizontalScanlineRGBA(rgbaFull, y)
 
 	pix := rowRgba.Pix
 	for i := 0; i < len(pix); i += 4 {

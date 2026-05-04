@@ -57,7 +57,7 @@ func TestTuiConfigValidation(t *testing.T) {
 
 func TestTuiConfigGradientRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	cfg := &tuiConfig{IP: "10.0.0.2", Source: "bg", Brightness: 200, Saturation: 1.1, Gradient: true, GradientLEDs: 0}
+	cfg := &tuiConfig{IP: "10.0.0.2", Source: "bg", Brightness: 200, Saturation: 1.1, Gradient: true, GradientLEDs: 0, GradientRow: 33}
 	if err := saveTuiConfig(path, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -65,8 +65,20 @@ func TestTuiConfigGradientRoundTrip(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatalf("load: %v %+v", err, got)
 	}
-	if !got.Gradient || got.Source != "bg" || got.GradientLEDs != 0 || got.Brightness != 200 {
+	if !got.Gradient || got.Source != "bg" || got.GradientLEDs != 0 || got.Brightness != 200 || got.GradientRow != 33 {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestTuiConfigGradientRowValidation(t *testing.T) {
+	base := tuiConfig{IP: "1", Source: "bg", Brightness: 255, Saturation: 1.0, Gradient: true, GradientLEDs: 0, GradientRow: 50}
+	if err := (&base).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	bad := base
+	bad.GradientRow = 101
+	if err := (&bad).Validate(); err == nil {
+		t.Fatal("expected error for gradient_row > 100")
 	}
 }
 

@@ -23,6 +23,7 @@ type tuiConfig struct {
 	Saturation   float64
 	Gradient     bool // wallpaper column strip (requires source bg)
 	GradientLEDs int  // 0 = fetch LED count from WLED /json/info
+	GradientRow  int  // 0–100 scanline for gradient (0=top, 100=bottom)
 }
 
 const (
@@ -61,6 +62,9 @@ func (c *tuiConfig) Validate() error {
 	}
 	if c.GradientLEDs < 0 {
 		return fmt.Errorf("gradient_leds must be >= 0 — got %d", c.GradientLEDs)
+	}
+	if c.GradientRow < 0 || c.GradientRow > 100 {
+		return fmt.Errorf("gradient_row must be 0–100 — got %d", c.GradientRow)
 	}
 	return nil
 }
@@ -128,6 +132,12 @@ func loadTuiConfig(path string) (*tuiConfig, error) {
 			gradLEDs = n
 		}
 	}
+	gradRow := 50
+	if v, ok := m["gradient_row"]; ok {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			gradRow = n
+		}
+	}
 	nsrc := normalizeSource(src)
 	if nsrc != "bg" {
 		grad = false
@@ -139,6 +149,7 @@ func loadTuiConfig(path string) (*tuiConfig, error) {
 		Saturation:   sat,
 		Gradient:     grad,
 		GradientLEDs: gradLEDs,
+		GradientRow:  gradRow,
 	}, nil
 }
 
@@ -156,8 +167,9 @@ brightness = %d
 saturation = %g
 gradient = %t
 gradient_leds = %d
+gradient_row = %d
 `,
-		c.IP, src, c.Brightness, c.Saturation, grad, c.GradientLEDs,
+		c.IP, src, c.Brightness, c.Saturation, grad, c.GradientLEDs, c.GradientRow,
 	)
 	return os.WriteFile(path, []byte(content), 0o644)
 }
@@ -169,6 +181,7 @@ func previewPushTUI(cfg *tuiConfig, tracker *daemon.DedupeTracker) error {
 	opts := daemon.PushOptions{
 		WallpaperGradientStrip: cfg.Gradient && normalizeSource(cfg.Source) == "bg",
 		GradientLEDCountOrZero: cfg.GradientLEDs,
+		GradientRowPercent:     cfg.GradientRow,
 	}
 	prep, skip, err := daemon.PreparePushColors(src, cfg.IP, cfg.Saturation, opts, true, true)
 	if err != nil {

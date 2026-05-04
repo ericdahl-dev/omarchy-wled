@@ -14,6 +14,8 @@ import (
 type PushOptions struct {
 	WallpaperGradientStrip bool
 	GradientLEDCountOrZero int // 0 → query WLED /json/info
+	// GradientRowPercent selects which horizontal scanline feeds the strip (0 = top, 100 = bottom).
+	GradientRowPercent int
 }
 
 type gradientStripSnapshot struct {

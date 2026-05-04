@@ -29,6 +29,7 @@ type cliOpts struct {
 	wledIP            string
 	bgGradient        bool
 	gradientLEDs      int
+	gradientRow       int // 0–100; horizontal scanline for wallpaper gradient strip
 }
 
 // parseArgs parses argv using the same defaults as loadConfig merge rules.
@@ -59,6 +60,12 @@ func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts
 			defaultGradientLEDs = n
 		}
 	}
+	defaultGradientRow := 50
+	if v, ok := cfg["gradient_row"]; ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			defaultGradientRow = n
+		}
+	}
 
 	fs := flag.NewFlagSet("omarchy-wled", flag.ContinueOnError)
 	fs.SetOutput(output)
@@ -75,9 +82,11 @@ func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts
 		"Saturation multiplier (0.0=greyscale, 1.0=unchanged, >1.0=boost;\n"+
 			"default 1.2 for accent, 1.0 for fg/bg)")
 	gradient := fs.Bool("gradient", defaultGradient,
-		"Wallpaper left/right averages as strip endpoints (spatial fade via seg.i; requires -source bg)")
+		"Wallpaper horizontal scanline as per-LED strip (spatial fade via seg.i; requires -source bg)")
 	gradientLEDs := fs.Int("gradient-leds", defaultGradientLEDs,
 		"LED count for spatial fade (0 = fetch from WLED /json/info)")
+	gradientRow := fs.Int("gradient-row", defaultGradientRow,
+		"Wallpaper gradient: vertical position of scanline 0–100 (0=top, 100=bottom; default 50)")
 	once := fs.Bool("once", false, "Send current color once and exit (no watching)")
 	fs.Usage = func() {
 		fmt.Fprintf(output, "Usage: omarchy-wled [options] [WLED_IP]\n")
@@ -96,6 +105,7 @@ func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts
 	opts.once = *once
 	opts.bgGradient = *gradient
 	opts.gradientLEDs = *gradientLEDs
+	opts.gradientRow = *gradientRow
 
 	opts.wledIP = cfg["ip"]
 	if fs.NArg() > 0 {
@@ -107,6 +117,9 @@ func parseArgs(args []string, cfg map[string]string, output io.Writer) (*cliOpts
 func validateCli(opts *cliOpts) error {
 	if opts.bgGradient && opts.sourceName != "bg" {
 		return fmt.Errorf("-gradient requires -source bg")
+	}
+	if opts.gradientRow < 0 || opts.gradientRow > 100 {
+		return fmt.Errorf("-gradient-row must be 0–100 — got %d", opts.gradientRow)
 	}
 	return nil
 }
@@ -161,6 +174,7 @@ func main() {
 	pushOpts := daemon.PushOptions{
 		WallpaperGradientStrip: opts.bgGradient,
 		GradientLEDCountOrZero: opts.gradientLEDs,
+		GradientRowPercent:     opts.gradientRow,
 	}
 
 	if opts.once {
