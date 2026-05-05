@@ -23,6 +23,7 @@ type Transport struct {
 	// Baud is the baud rate; 0 defaults to 115200.
 	Baud int
 
+	// f is the open serial port file; nil before the first call to open().
 	f *os.File
 }
 
@@ -84,7 +85,9 @@ func (t *Transport) ResolveGradientLEDCount(configured int) (int, error) {
 	return configured, nil
 }
 
-// Close closes the serial port.
+// Close closes the serial port. It is called by main when the program exits
+// (e.g. after -once mode) to release the port cleanly. The daemon's indefinite
+// loop does not call Close since the process lifetime equals the port lifetime.
 func (t *Transport) Close() error {
 	if t.f != nil {
 		err := t.f.Close()

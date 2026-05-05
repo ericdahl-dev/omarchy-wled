@@ -200,7 +200,9 @@ func main() {
 
 	var tr transport.Transport
 	if opts.serialPort != "" {
-		tr = &serial.Transport{Port: opts.serialPort, Baud: opts.serialBaud}
+		st := &serial.Transport{Port: opts.serialPort, Baud: opts.serialBaud}
+		defer st.Close()
+		tr = st
 	} else {
 		tr = &transport.WLEDTransport{IP: opts.wledIP}
 	}
