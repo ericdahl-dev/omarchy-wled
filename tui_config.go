@@ -12,6 +12,7 @@ import (
 	"github.com/ericdahl-dev/omarchy-wled/internal/config"
 	"github.com/ericdahl-dev/omarchy-wled/internal/daemon"
 	"github.com/ericdahl-dev/omarchy-wled/internal/source"
+	"github.com/ericdahl-dev/omarchy-wled/internal/transport"
 	"github.com/ericdahl-dev/omarchy-wled/internal/wallpaper"
 	"github.com/ericdahl-dev/omarchy-wled/internal/wled"
 )
@@ -207,11 +208,12 @@ func previewPushTUI(cfg *tuiConfig, tracker *daemon.DedupeTracker) error {
 		GradientSample:         wallpaper.GradientSampleKindFromString(cfg.GradientSample),
 		GradientRowPercent:     cfg.GradientRow,
 	}
-	prep, skip, err := daemon.PreparePushColors(src, cfg.IP, cfg.Saturation, opts, true, true)
+	t := &transport.WLEDTransport{IP: cfg.IP}
+	prep, skip, err := daemon.PreparePushColors(src, t, cfg.Saturation, opts, true, true)
 	if err != nil {
 		return err
 	}
-	return daemon.DeliverPreparedColors(cfg.IP, cfg.Brightness, cfg.Saturation, tracker, prep, skip, false)
+	return daemon.DeliverPreparedColors(t, cfg.Brightness, cfg.Saturation, tracker, prep, skip, false)
 }
 
 // previewSolidToWLED reads the color source and pushes a solid color (tests).
