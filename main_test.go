@@ -18,6 +18,7 @@ import (
 	"github.com/ericdahl-dev/omarchy-wled/internal/daemon"
 	"github.com/ericdahl-dev/omarchy-wled/internal/paths"
 	"github.com/ericdahl-dev/omarchy-wled/internal/source"
+	"github.com/ericdahl-dev/omarchy-wled/internal/transport"
 	"github.com/ericdahl-dev/omarchy-wled/internal/wallpaper"
 	"github.com/ericdahl-dev/omarchy-wled/internal/wled"
 )
@@ -263,7 +264,7 @@ func TestPushIfChangedSendsOnFirstCall(t *testing.T) {
 
 	tracker := &daemon.DedupeTracker{}
 	src := &fixedColorSource{color: [3]uint8{100, 150, 200}}
-	daemon.PushCurrentColorIfChanged(src, tracker, "ignored", 255, 1.0, daemon.PushOptions{})
+	daemon.PushCurrentColorIfChanged(src, tracker, &transport.WLEDTransport{IP: "ignored"}, 255, 1.0, daemon.PushOptions{})
 	if sent != 1 {
 		t.Errorf("expected 1 send, got %d", sent)
 	}
@@ -283,8 +284,8 @@ func TestPushIfChangedDoesNotResendSameColor(t *testing.T) {
 
 	tracker := &daemon.DedupeTracker{}
 	src := &fixedColorSource{color: [3]uint8{100, 150, 200}}
-	daemon.PushCurrentColorIfChanged(src, tracker, "ignored", 255, 1.0, daemon.PushOptions{})
-	daemon.PushCurrentColorIfChanged(src, tracker, "ignored", 255, 1.0, daemon.PushOptions{})
+	daemon.PushCurrentColorIfChanged(src, tracker, &transport.WLEDTransport{IP: "ignored"}, 255, 1.0, daemon.PushOptions{})
+	daemon.PushCurrentColorIfChanged(src, tracker, &transport.WLEDTransport{IP: "ignored"}, 255, 1.0, daemon.PushOptions{})
 	if sent != 1 {
 		t.Errorf("expected 1 send (deduplicated), got %d", sent)
 	}
@@ -332,8 +333,8 @@ func TestPushIfChangedGradientDedupes(t *testing.T) {
 	tracker := &daemon.DedupeTracker{}
 	src := &source.WallpaperAverage{}
 	opts := daemon.PushOptions{WallpaperGradientStrip: true, GradientLEDCountOrZero: 4}
-	daemon.PushCurrentColorIfChanged(src, tracker, "ignored", 255, 1.0, opts)
-	daemon.PushCurrentColorIfChanged(src, tracker, "ignored", 255, 1.0, opts)
+	daemon.PushCurrentColorIfChanged(src, tracker, &transport.WLEDTransport{IP: "ignored"}, 255, 1.0, opts)
+	daemon.PushCurrentColorIfChanged(src, tracker, &transport.WLEDTransport{IP: "ignored"}, 255, 1.0, opts)
 	if sent != 1 {
 		t.Errorf("expected 1 HTTP POST (deduped), got %d", sent)
 	}
@@ -353,7 +354,7 @@ func TestPushIfChangedAppliesSaturation(t *testing.T) {
 
 	tracker := &daemon.DedupeTracker{}
 	// saturation=0 should make r==g==b
-	daemon.PushCurrentColorIfChanged(&fixedColorSource{color: [3]uint8{100, 200, 150}}, tracker, "ignored", 255, 0.0, daemon.PushOptions{})
+	daemon.PushCurrentColorIfChanged(&fixedColorSource{color: [3]uint8{100, 200, 150}}, tracker, &transport.WLEDTransport{IP: "ignored"}, 255, 0.0, daemon.PushOptions{})
 
 	var payload map[string]any
 	if err := json.Unmarshal(captured, &payload); err != nil {
@@ -387,7 +388,7 @@ func TestPollTickSkipsSendWhenStateMatchesRead(t *testing.T) {
 	tracker.MarkSolidSent(c)
 	src := &fixedColorSource{color: c, sentinel: "s1"}
 	var last string
-	daemon.PollTick("ignored", 255, 1.0, src, tracker, &last, daemon.PushOptions{})
+	daemon.PollTick(&transport.WLEDTransport{IP: "ignored"}, 255, 1.0, src, tracker, &last, daemon.PushOptions{})
 	if sent != 0 {
 		t.Errorf("want 0 HTTP sends when last_color matches read(), got %d", sent)
 	}

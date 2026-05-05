@@ -7,12 +7,14 @@ import (
 
 	"github.com/ericdahl-dev/omarchy-wled/internal/daemon"
 	"github.com/ericdahl-dev/omarchy-wled/internal/source"
+	"github.com/ericdahl-dev/omarchy-wled/internal/transport"
 	"github.com/ericdahl-dev/omarchy-wled/internal/wled"
 )
 
 func TestPreparePushColors_GradientRequiresWallpaperStrict(t *testing.T) {
 	src := source.FromFlag("accent")
-	_, _, err := daemon.PreparePushColors(src, "127.0.0.1", 1.0, daemon.PushOptions{WallpaperGradientStrip: true}, true, true)
+	tr := &transport.WLEDTransport{IP: "127.0.0.1"}
+	_, _, err := daemon.PreparePushColors(src, tr, 1.0, daemon.PushOptions{WallpaperGradientStrip: true}, true, true)
 	if err == nil {
 		t.Fatal("expected error when gradient strip requested but source is not wallpaper")
 	}
@@ -20,7 +22,8 @@ func TestPreparePushColors_GradientRequiresWallpaperStrict(t *testing.T) {
 
 func TestPreparePushColors_GradientSkipsNonWallpaperDaemonMode(t *testing.T) {
 	src := source.FromFlag("accent")
-	_, skip, err := daemon.PreparePushColors(src, "127.0.0.1", 1.0, daemon.PushOptions{WallpaperGradientStrip: true}, false, false)
+	tr := &transport.WLEDTransport{IP: "127.0.0.1"}
+	_, skip, err := daemon.PreparePushColors(src, tr, 1.0, daemon.PushOptions{WallpaperGradientStrip: true}, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +48,8 @@ func TestDeliverPreparedColors_NoHTTPWhenDedupeSolid(t *testing.T) {
 	tr := &daemon.DedupeTracker{}
 	tr.MarkSolidSent(rgb)
 
-	err := daemon.DeliverPreparedColors("ignored", 255, 1.0, tr, daemon.PreparedColors{Solid: rgb}, false, false)
+	wtr := &transport.WLEDTransport{IP: "ignored"}
+	err := daemon.DeliverPreparedColors(wtr, 255, 1.0, tr, daemon.PreparedColors{Solid: rgb}, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +71,8 @@ func TestDeliverPreparedColors_PostsWhenSolidChanged(t *testing.T) {
 	t.Cleanup(func() { wled.TestStatePostURL = orig })
 
 	tr := &daemon.DedupeTracker{}
-	err := daemon.DeliverPreparedColors("ignored", 255, 1.0, tr, daemon.PreparedColors{Solid: [3]uint8{1, 2, 3}}, false, false)
+	wtr := &transport.WLEDTransport{IP: "ignored"}
+	err := daemon.DeliverPreparedColors(wtr, 255, 1.0, tr, daemon.PreparedColors{Solid: [3]uint8{1, 2, 3}}, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

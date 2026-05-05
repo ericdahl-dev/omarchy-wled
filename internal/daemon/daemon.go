@@ -1,4 +1,4 @@
-// Package daemon wires Omarchy color sources to WLED pushes: dedupe, watch, and poll fallback.
+// Package daemon wires Omarchy color sources to LED pushes: dedupe, watch, and poll fallback.
 package daemon
 
 import (
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ericdahl-dev/omarchy-wled/internal/source"
+	"github.com/ericdahl-dev/omarchy-wled/internal/transport"
 	"github.com/ericdahl-dev/omarchy-wled/internal/wallpaper"
 	"github.com/fsnotify/fsnotify"
 )
@@ -79,9 +80,9 @@ func (t *DedupeTracker) MarkGradientSent(colors [][3]uint8) {
 }
 
 // RunFsnotifyLoop watches src.WatchDir() and pushes after debounce when IsTrigger matches.
-func RunFsnotifyLoop(wledIP string, brightness int, saturation float64, src source.Source, opts PushOptions) error {
+func RunFsnotifyLoop(t transport.Transport, brightness int, saturation float64, src source.Source, opts PushOptions) error {
 	tracker := &DedupeTracker{}
-	PushCurrentColorIfChanged(src, tracker, wledIP, brightness, saturation, opts)
+	PushCurrentColorIfChanged(src, tracker, t, brightness, saturation, opts)
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -104,7 +105,7 @@ func RunFsnotifyLoop(wledIP string, brightness int, saturation float64, src sour
 			}
 			if src.IsTrigger(event.Name) {
 				time.Sleep(200 * time.Millisecond)
-				PushCurrentColorIfChanged(src, tracker, wledIP, brightness, saturation, opts)
+				PushCurrentColorIfChanged(src, tracker, t, brightness, saturation, opts)
 			}
 		case watchErr, ok := <-watcher.Errors:
 			if !ok {
@@ -116,7 +117,7 @@ func RunFsnotifyLoop(wledIP string, brightness int, saturation float64, src sour
 }
 
 // PollTick runs when Sentinel() changes; used by the polling loop and tests.
-func PollTick(wledIP string, brightness int, saturation float64, src source.Source, tracker *DedupeTracker, previousSentinel *string, opts PushOptions) {
+func PollTick(t transport.Transport, brightness int, saturation float64, src source.Source, tracker *DedupeTracker, previousSentinel *string, opts PushOptions) {
 	currentSentinel, err := src.Sentinel()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -127,5 +128,5 @@ func PollTick(wledIP string, brightness int, saturation float64, src source.Sour
 	}
 	*previousSentinel = currentSentinel
 	time.Sleep(200 * time.Millisecond)
-	PushCurrentColorIfChanged(src, tracker, wledIP, brightness, saturation, opts)
+	PushCurrentColorIfChanged(src, tracker, t, brightness, saturation, opts)
 }
