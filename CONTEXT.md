@@ -20,7 +20,7 @@ Sync color from an [Omarchy](https://omarchy.org) desktop environment to a [WLED
 
 **Sentinel** — a string fingerprint that changes when the color source’s backing files change (e.g. `theme.name` / `colors.toml` mtimes, wallpaper symlink target). Exposed as `source.Source.Sentinel()` for the poll fallback and implemented per source type.
 
-**Poll fallback** — when `fsnotify` cannot initialise a watcher (unusual on Linux), the daemon runs a 1-second loop: if `Sentinel()` differs from the previous value, it debounces and pushes (same path as a filesystem trigger).
+**Poll fallback** — when `fsnotify` cannot initialize a watcher (unusual on Linux), the daemon runs a 1-second loop: if `Sentinel()` differs from the previous value, it debounces and pushes (same path as a filesystem trigger).
 
 **Seam** — the `source.Source` interface: `Read()`, `WatchDir()`, `IsTrigger()`, `Sentinel()`. Adding a new source means implementing this interface only.
 
