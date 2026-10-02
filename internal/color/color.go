@@ -33,7 +33,7 @@ func NamedHexFromColorsToml(tomlKey, colorsTomlPath string) ([3]uint8, error) {
 }
 
 // ScaleSaturation converts to HSV, multiplies S by saturationMultiplier, converts back to sRGB.
-// multiplier 1.0 leaves hue/value; 0.0 yields grey; >1.0 boosts vividness (S capped at 1).
+// multiplier 1.0 leaves hue/value; 0.0 yields gray; >1.0 boosts vividness (S capped at 1).
 func ScaleSaturation(rgb [3]uint8, saturationMultiplier float64) [3]uint8 {
 	rN := float64(rgb[0]) / 255
 	gN := float64(rgb[1]) / 255
